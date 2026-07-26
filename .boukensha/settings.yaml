@@ -2,6 +2,8 @@ tasks:
   player:
     provider: anthropic        # provider name (string)
     model: claude-haiku-4-5
+    #provider: ollama        # provider name (string)
+    #model: gemma4
     prompt_override:
       system: true
 mud:
