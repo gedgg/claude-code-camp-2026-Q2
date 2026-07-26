@@ -1,0 +1,205 @@
+# Python Port Plan — Step 00 · Configuration
+
+## Purpose
+
+Port `week1_baseline/ruby/00_config` (the `Boukensha::Config` step) to Python,
+producing a `week1_baseline/python/00_config` package that is behaviourally
+equivalent to the Ruby one: same config-dir resolution, same `settings.yaml`
+schema, same task/prompt-resolution rules, same example output.
+
+This is the first of what should become a series of
+`docs/plans/python_port/<step>` plans — one per numbered baseline step — as
+the Ruby line advances (`01_*`, `02_*`, …) and each gets ported in turn.
+`mud_manager` (the Ruby telnet-session gem under `week0_explore/`) is **out of
+scope** here — it hasn't been folded into a numbered `week1_baseline` step yet,
+so it has no Ruby "spec" to port against. It will get its own plan once it
+lands there.
+
+## Reference files (source of truth)
+
+The Ruby implementation is the spec. Every behavioural claim below is anchored
+to these files — read them before changing the plan:
+
+| File | Role |
+|------|------|
+| `week1_baseline/ruby/00_config/README.md` | Design intent, config schema, expected example output |
+| `week1_baseline/ruby/00_config/lib/boukensha/config.rb` | `Boukensha::Config`: dir resolution, `.env`/`settings.yaml` loading, `dig`, MUD accessors |
+| `week1_baseline/ruby/00_config/lib/boukensha/tasks/base.rb` | `Boukensha::Tasks::Base`: provider/model lookup, prompt override + resolution |
+| `week1_baseline/ruby/00_config/lib/boukensha/tasks/player.rb` | `Boukensha::Tasks::Player < Base`: `task_name = "player"` |
+| `week1_baseline/ruby/00_config/lib/boukensha.rb` | Top-level require list |
+| `week1_baseline/ruby/00_config/prompts/system.md` | Default system prompt shipped with the library |
+| `week1_baseline/ruby/00_config/examples/example.rb` | Smoke test / expected console output |
+| `week1_baseline/ruby/00_config/Gemfile` + `Gemfile.lock` | Only dependency: `dotenv` |
+| `week1_baseline/bin/00_config` | Repo-root launcher script (`bundle exec ruby examples/example.rb`) |
+| `.boukensha/settings.yaml`, `.boukensha/.env`, `.boukensha/prompts/player/system.md` | A real local config dir to test against |
+
+For Python tooling conventions, follow the sibling project already in the
+repo rather than inventing new ones:
+
+| File | Convention to reuse |
+|------|----------------------|
+| `week0_explore/circlemud-world-parser/pyproject.toml` | `hatchling` build backend, `[project.scripts]`, `ruff` line-length 120, `dependency-groups.dev` |
+| `week0_explore/circlemud-world-parser/.python-version` | Pins `3.14` |
+| `week0_explore/circlemud-world-parser/uv.lock` | Dependency manager is **uv** |
+| `week0_explore/circlemud-world-parser/tests/` | Test layout (pytest) |
+
+## Target layout
+
+```
+week1_baseline/python/00_config/
+  pyproject.toml
+  uv.lock
+  .python-version              # "3.14"
+  README.md                    # ported from ruby/00_config/README.md
+  src/boukensha/
+    __init__.py
+    config.py                  # Config
+    tasks/
+      __init__.py
+      base.py                  # Task (abstract base)
+      player.py                # Player(Task)
+  prompts/
+    system.md                  # default system prompt, verbatim copy
+  examples/
+    example.py                 # smoke test, mirrors example.rb output
+  tests/
+    test_config.py
+    test_tasks.py
+```
+
+`week1_baseline/python/00_congfig` (empty, untracked, typo'd — "congfig") is a
+stray placeholder and should be deleted once this structure lands; it has
+never been committed, so removing it loses nothing.
+
+## File-by-file port mapping
+
+| Ruby | Python | Notes |
+|------|--------|-------|
+| `lib/boukensha/config.rb` | `src/boukensha/config.py` | `Config` class; `Pathname` → `pathlib.Path`; `Dir.home` → `Path.home()` |
+| `lib/boukensha/tasks/base.rb` | `src/boukensha/tasks/base.py` | Ruby uses class methods on an uninstantiated class; Python equivalent is `@classmethod`s on `Task`, or plain module functions (see Q3) |
+| `lib/boukensha/tasks/player.rb` | `src/boukensha/tasks/player.py` | `Player(Task)` with `task_name = "player"` as a class attribute |
+| `lib/boukensha.rb` | `src/boukensha/__init__.py` | Re-export `Config`, `Task`, `Player` |
+| `prompts/system.md` | `prompts/system.md` | Copy verbatim |
+| `examples/example.rb` | `examples/example.py` | Same console output, same assertions |
+| `Gemfile` (`dotenv`) | `pyproject.toml` deps: `python-dotenv`, `pyyaml` | See Q1 — Python stdlib has no YAML parser |
+| `week1_baseline/bin/00_config` | `week1_baseline/bin/00_config_py` (or modify existing — see Q5) | Launcher script |
+
+## Behavioural rules carried over unchanged
+
+These are load-bearing and must match the Ruby side exactly, since the plan
+is parity, not redesign:
+
+1. **Config dir resolution**: `BOUKENSHA_DIR` env var, else `~/.boukensha`.
+2. **Config dir contents**: `.env` (secrets, optional), `settings.yaml`
+   (non-secret settings), `prompts/<task>/system.md` (optional per-task
+   override).
+3. **`tasks(name=None)`**: no-arg returns the whole `tasks:` map; named
+   returns one task's settings dict.
+4. **Task class contract** (`Task.task_name`, `.provider`, `.model`,
+   `.prompt_override(settings, prompt="system")`, `.prompt(...)`,
+   `.system_prompt(...)`): `provider`/`model` raise if missing from
+   settings; `prompt_override` defaults to `False` unless explicitly `true`.
+5. **Prompt resolution order**: user override
+   (`<user_prompts_dir>/<task>/system.md`) only if `prompt_override.system`
+   is `true` **and** the file exists; otherwise the default
+   (`<default_prompts_dir>/system.md`).
+6. **MUD accessors**: `mud_host` defaults `"localhost"`, `mud_port` defaults
+   `4000`, `mud_username`/`mud_password` default `None`.
+7. **`Config.dig(*keys)`**: nested lookup through the parsed settings dict.
+   Ruby's version tries both string and symbol keys because YAML keys can
+   load as either; Python's `yaml.safe_load` always produces `str` keys, so
+   the Python `dig` only needs to do a plain nested `dict.get` chain — no
+   symbol/string duality to replicate (see Q4).
+8. **`Config.__repr__`/`__str__`** equivalent to Ruby's `#<Boukensha::Config
+   dir=... tasks=...>`.
+
+## Design decisions to make explicitly (things Ruby's dynamism papers over)
+
+- **Type hints + dataclasses**: use `dataclass` or plain classes with type
+  hints for `Config`/`Task` return values, since Python doesn't have Ruby's
+  duck-typed `Hash` conventions. Recommend a light touch — hints on public
+  method signatures, dict/`Any` for the raw settings blob, not a full schema
+  model (that's arguably a later step once the schema stabilizes further).
+- **Errors**: Ruby raises `ArgumentError`; Python should raise a
+  domain-specific exception (e.g. `boukensha.errors.ConfigError`) rather than
+  bare `ValueError`, so callers can catch config problems specifically.
+- **`Task` being "stateless class methods"**: translate straightforwardly to
+  `@classmethod`s on an abstract `Task` base (raising `NotImplementedError`
+  for `task_name` the way Ruby does), keeping the "no instances" shape intact
+  rather than switching to instances/dependency injection — that's a
+  bigger redesign than "port," and nothing downstream needs it yet.
+
+## Testing
+
+Ruby's `00_config` has no automated tests, only `examples/example.rb` as a
+manual smoke test. The Python sibling project (`circlemud-world-parser`) does
+use `pytest`. Recommend both:
+
+1. Port `examples/example.py` 1:1 for manual/CI smoke-testing against a real
+   `.boukensha/` dir (matches Ruby's existing pattern).
+2. Add `tests/test_config.py` and `tests/test_tasks.py` with `pytest`,
+   covering the 8 behavioural rules above against a temp config dir (`tmp_path`
+   fixture) — this is new coverage Ruby doesn't have, but it's cheap and
+   catches regressions as later steps modify the schema, per the Ruby
+   README's own warning that "we will be updating the configuration schema
+   and class" each iteration.
+
+## Open questions
+
+1. **YAML/dotenv are not Python stdlib.** The Ruby README's design goal is
+   "use the standard library as much as possible avoiding external gems."
+   Python's stdlib has no YAML parser, so `pyyaml` is unavoidable if we keep
+   YAML as the settings format (`python-dotenv` mirrors Ruby's one
+   deliberate exception already). Do we: (a) accept `pyyaml` +
+   `python-dotenv` as the Python equivalent of "minimal deps," or (b) switch
+   the settings format to TOML (`tomllib` *is* stdlib in 3.11+) to actually
+   honor the stdlib-only goal? (b) is a schema/format break from the Ruby
+   side and would make the two implementations diverge in a user-visible way
+   (`settings.yaml` vs `settings.toml`).
+
+Switch to settings.toml to make it pythonic as possible
+
+2. **Package name/import path.** Ruby uses `Boukensha::Config`. Is
+   `boukensha` an acceptable top-level Python package/import name repo-wide
+   (i.e. will later ports of `mud_manager` etc. also live under it, or does
+   each numbered step get its own package)?
+
+`boukensha` is an acceptable top-level Python package/import name repo-wide
+
+3. **Class-method-only `Task` vs. plain functions.** Ruby's
+   `Tasks::Base`/`Tasks::Player` are classes that are never instantiated —
+   just namespaces for class methods. Is mirroring that with `@classmethod`s
+   the right call, or would plain functions in `tasks/base.py` (taking
+   `settings` as the first arg) read more idiomatically in Python? Leaning
+   towards keeping the class shape for now, for structural parity with
+   Ruby's `Task.method(settings)` call sites shown in the README, but flagging
+   it since it's a stylistic fork point.
+
+keep the class shape for now
+
+4. Confirmed no action needed, listed above for completeness: Python's
+   `yaml.safe_load` always returns `str` keys, so the Ruby `dig` helper's
+   string/symbol fallback has no Python equivalent to build — just a plain
+   `dict.get` chain.
+5. **Launcher script.** Should `week1_baseline/bin/00_config` be modified to
+   dispatch to either language (e.g. via a `BOUKENSHA_LANG` env var or a
+   flag), replaced outright once Python is the primary line, or should a
+   parallel `week1_baseline/bin/00_config_py` be added and both kept
+   side-by-side indefinitely for comparison? This affects whether the Ruby
+   version stays runnable after the port.
+
+added dirs `week1_baseline/bin/ruby/00_config_py` and `week1_baseline/bin/python/00_config_py` would that work?
+
+6. **Directory structure: flat `lib/` vs. `src/` layout.** Proposed
+   `src/boukensha/...` above follows modern Python packaging convention (and
+   avoids import-path ambiguity), but it doesn't mirror Ruby's flat `lib/`
+   directly. Confirm `src/`-layout is acceptable, or prefer a flatter
+   `boukensha/` at the package root to stay visually closer to the Ruby tree.
+
+Sounds good.
+
+7. **Stray file cleanup.** `week1_baseline/python/00_congfig` (typo, empty,
+   untracked) — confirm it's fine to delete as part of this work rather than
+   rename/reuse.
+
+Fixed
