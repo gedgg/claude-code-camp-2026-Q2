@@ -15,9 +15,93 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 |------|-------------|----------------|--------|
 | `00_config` | `week1_baseline/ruby/00_config` | `week1_baseline/python/00_config` | ✅ done |
 | `01_struct_skeleton` | `week1_baseline/ruby/01_struct_skeleton` | `week1_baseline/python/01_struct_skeleton` | ✅ done |
+| `02_the_registry` | `week1_baseline/ruby/02_the_registry` | `week1_baseline/python/02_the_registry` | ✅ done |
 
 Nothing has been committed to git yet — everything below is working-tree
 state as of 2026-07-26.
+
+---
+
+## 02_the_registry — done (2026-07-26)
+
+Plan: [`docs/plans/python_port/02_the_registry`](02_the_registry)
+
+Ported `Boukensha::Registry`/`UnknownToolError` to
+`week1_baseline/python/02_the_registry/`, a fully self-contained `uv`
+project. Confirmed via `diff` that `config.rb`/`tool.rb`/`message.rb`/
+`context.rb`/`tasks/*.rb` are byte-identical to `01_struct_skeleton`'s copies,
+so they were copied forward unchanged again; only `registry.py` and an
+addition to `errors.py` (`UnknownToolError`) are new.
+
+### Decisions made (answers to the plan's open questions)
+
+1. **`Registry.tool`'s `block` is a plain keyword-only `Callable` parameter,
+   confirmed** — not a decorator. Ruby's trailing `do |direction:| ... end`
+   block has no Python equivalent; passing a `lambda` as `block=` at the
+   call site matches how `01_struct_skeleton`'s `example.py` already passes
+   callables to `Tool.block`.
+2. **Symbol/string `transform_keys` gotcha dropped entirely, confirmed.**
+   Ruby's `dispatch` converts string-keyed args to symbol keys before
+   calling the block (a deliberate pedagogical gotcha per the Ruby README).
+   Python dict keys are always `str` and `**args` unpacks them straight into
+   keyword arguments, so there is nothing to simulate — the Python
+   `dispatch` just does `tool.block(**args)` directly.
+3. **`UnknownToolError` lives in the existing `errors.py`, confirmed**,
+   alongside `ConfigError` — matches Ruby's `errors.rb` holding both
+   concerns once it exists. This one's a straight 1:1 port since Ruby
+   already gives it a real, specific name (unlike `ArgumentError →
+   ConfigError` back in `00_config`).
+
+### What exists now
+
+```
+week1_baseline/python/02_the_registry/
+  pyproject.toml, uv.lock, .python-version (3.14), .gitignore, README.md
+  src/boukensha/
+    __init__.py     # exports Config, ConfigError, Context, Message, Player,
+                     # Registry, Task, Tool, UnknownToolError
+    config.py        # unchanged copy from 01_struct_skeleton
+    errors.py        # ConfigError (unchanged) + new UnknownToolError
+    tool.py           # unchanged copy from 01_struct_skeleton
+    message.py        # unchanged copy from 01_struct_skeleton
+    context.py         # unchanged copy from 01_struct_skeleton
+    registry.py         # Registry: tool(name, *, description, parameters=None,
+                         # block=None) / dispatch(name, args=None)
+    tasks/              # unchanged copy from 01_struct_skeleton
+  prompts/system.md     # unchanged copy from 01_struct_skeleton
+  examples/example.py   # 1:1 port of example.rb; verified identical output
+  tests/
+    test_config.py, test_tasks.py, test_tool.py, test_message.py,
+    test_context.py     # unchanged copies from 01_struct_skeleton
+    test_registry.py    # new, 5 cases
+
+week1_baseline/bin/python/02_the_registry   # new launcher
+```
+
+### Verified
+
+- `./week1_baseline/bin/python/02_the_registry` run from repo root produces
+  output matching `./week1_baseline/bin/ruby/02_the_registry` line-for-line,
+  except the already-documented `params=['direction']` vs.
+  `params=[:direction]` divergence (no Python symbol syntax).
+- `uv run pytest -v` — 41/41 passing.
+- `uv run ruff check src examples tests` — clean.
+
+### Known upstream README inconsistencies noted (no action needed)
+
+- The Ruby README's "Run Example" section points at a stale
+  `./week1_baseline/bin/01_the_registry` path; the real, working script is
+  `week1_baseline/bin/ruby/02_the_registry` (confirmed by running it).
+- The Ruby README's expected output still shows a `budget=8192` field that
+  `context.rb` doesn't implement — same gap already noted under
+  `01_struct_skeleton`.
+
+### Loose threads for the next step
+
+- `config.py`/`tool.py`/`message.py`/`context.py`/`tasks/*.py` now exist
+  verbatim in `00_config`, `01_struct_skeleton`, **and**
+  `02_the_registry`. Same hand-sync burden as before if the Ruby side ever
+  changes one of these — now three places to update instead of two.
 
 ---
 

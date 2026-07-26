@@ -1,0 +1,174 @@
+# Python Port Plan — Step 02 · The Registry
+
+## Purpose
+
+Port `week1_baseline/ruby/02_the_registry` to Python, producing
+`week1_baseline/python/02_the_registry` that is behaviourally equivalent:
+same `Registry` shape (`tool`/`dispatch`), same `UnknownToolError`, same
+`example.rb` console output (modulo the accepted language-level divergences
+already established in `01_struct` and one new one, below).
+
+This is the third entry in the `docs/plans/python_port/<step>` series (see
+[`context.md`](context.md) for the index). `01_struct_skeleton` is done; this
+step adds `Registry` and `UnknownToolError` on top of it. `Config`, `Task`,
+`Player`, `Tool`, `Message`, `Context` are all **unchanged** on the Ruby side
+(confirmed with `diff` against `01_struct_skeleton`'s copies — byte-identical)
+and get copied forward again, same as `01_struct_skeleton` copied them from
+`00_config`.
+
+## Reference files (source of truth)
+
+| File | Role |
+|------|------|
+| `week1_baseline/ruby/02_the_registry/README.md` | Design intent, `Registry`/`UnknownToolError` docs, illustrative `to_s`/expected-output examples |
+| `week1_baseline/ruby/02_the_registry/lib/boukensha/registry.rb` | `Registry`: `tool`/`dispatch`, symbol/string key translation |
+| `week1_baseline/ruby/02_the_registry/lib/boukensha/errors.rb` | `Boukensha::UnknownToolError` (new — first real Boukensha-namespaced error class on the Ruby side) |
+| `week1_baseline/ruby/02_the_registry/lib/boukensha/{config,tool,message,context}.rb`, `tasks/{base,player}.rb` | Byte-identical to `01_struct_skeleton` — copy Python's existing ports forward unchanged |
+| `week1_baseline/ruby/02_the_registry/lib/boukensha.rb` | Top-level require list (adds `errors`, `registry`) |
+| `week1_baseline/ruby/02_the_registry/examples/example.rb` | Smoke test: registers `move`+`shout` via the registry, dispatches both, dispatches an unknown tool and rescues `UnknownToolError` |
+| `week1_baseline/ruby/02_the_registry/Gemfile` + `.lock` | Only dependency: `dotenv` (unchanged) |
+| `week1_baseline/bin/ruby/02_the_registry` | Repo-root launcher script (verified working; see inconsistency note below) |
+| `week1_baseline/python/01_struct_skeleton/` (entire tree) | Python-side source for the parts of this step that don't change: `config.py`, `errors.py` (`ConfigError` only so far), `tool.py`, `message.py`, `context.py`, `tasks/` |
+
+**Known upstream inconsistencies** (same category as the `token_budget` note
+in the `01_struct` plan — the `.rb`/`.py` code is the spec, not the README):
+
+1. The README's "Run Example" section says
+   `./week1_baseline/bin/01_the_registry`, but the actual working script —
+   confirmed by running it — is `week1_baseline/bin/ruby/02_the_registry`
+   (a leftover from when the step's directory was presumably renumbered).
+   Ignore the README path; the Python launcher is
+   `week1_baseline/bin/python/02_the_registry`, matching the real one.
+2. The README's expected output shows `Context: #<Context turns=0 tools=2
+   budget=8192>`, but `context.rb` still has no `token_budget` field (same
+   gap already noted in `01_struct`). Real output (confirmed by running the
+   script) is `#<Context task=player turns=0 tools=2>`. Nothing new to do
+   here — already ported correctly in `01_struct_skeleton`, just noting it
+   persists into this step's expected-output docs too.
+
+## Target layout
+
+```
+week1_baseline/python/02_the_registry/
+  pyproject.toml               # same shape as 01_struct_skeleton's, updated description
+  uv.lock
+  .python-version              # "3.14"
+  README.md                    # ported from ruby/02_the_registry/README.md
+  src/boukensha/
+    __init__.py                 # exports ..., Registry, UnknownToolError
+    config.py                   # unchanged copy from 01_struct_skeleton
+    errors.py                   # ConfigError (unchanged) + new UnknownToolError
+    tool.py                     # unchanged copy from 01_struct_skeleton
+    message.py                  # unchanged copy from 01_struct_skeleton
+    context.py                  # unchanged copy from 01_struct_skeleton
+    registry.py                 # new: Registry
+    tasks/
+      __init__.py, base.py, player.py   # unchanged copy from 01_struct_skeleton
+  prompts/
+    system.md                   # unchanged copy from 01_struct_skeleton
+  examples/
+    example.py                  # mirrors example.rb output
+  tests/
+    test_config.py               # unchanged copy from 01_struct_skeleton
+    test_tasks.py                 # unchanged copy from 01_struct_skeleton
+    test_tool.py                  # unchanged copy from 01_struct_skeleton
+    test_message.py               # unchanged copy from 01_struct_skeleton
+    test_context.py               # unchanged copy from 01_struct_skeleton
+    test_registry.py              # new
+
+week1_baseline/bin/python/02_the_registry   # new launcher, mirrors bin/python/01_struct_skeleton
+```
+
+## File-by-file port mapping
+
+| Ruby | Python | Notes |
+|------|--------|-------|
+| `lib/boukensha/registry.rb` | `src/boukensha/registry.py` | `Registry` class: `tool(...)`, `dispatch(...)` |
+| `lib/boukensha/errors.rb` | `src/boukensha/errors.py` | `UnknownToolError(Exception)` added to the existing file, alongside `ConfigError` — this is a genuine 1:1 port (Ruby already gives this one a real, specific name; no translation choice like `ArgumentError → ConfigError` was needed) |
+| `lib/boukensha/{config,tool,message,context}.rb`, `tasks/*.rb` | `src/boukensha/{...}.py` | Copied forward unchanged from `01_struct_skeleton` |
+| `lib/boukensha.rb` | `src/boukensha/__init__.py` | Add `Registry`, `UnknownToolError` to existing exports |
+| `examples/example.rb` | `examples/example.py` | Same structure: build config/context, wrap in `Registry`, register `move`+`shout`, dispatch both, dispatch unknown tool and catch the error |
+| `week1_baseline/bin/ruby/02_the_registry` | `week1_baseline/bin/python/02_the_registry` | Launcher, same pattern as prior pairs |
+
+## Behavioural rules carried over unchanged
+
+1. **`Registry.tool(name, description, parameters=None, block=None)`** builds
+   a `Tool` (coercing `name` to `str`, defaulting `parameters` to `{}`),
+   registers it on the wrapped `Context` via `register_tool`, and returns the
+   `Tool` (matches Ruby returning the tool from `def self.tool`, even though
+   `example.rb` doesn't use the return value).
+2. **`Registry.dispatch(name, args=None)`** looks up `context.tools[str(name)]`,
+   raises `UnknownToolError(f"No tool registered as '{name}'")` if missing
+   (message text matches Ruby exactly), otherwise calls `tool.block(**args)`.
+3. **`Config`/`Task`/`Player`/`Tool`/`Message`/`Context`** behaviour is
+   identical to `01_struct_skeleton` — no changes in this step.
+
+## Design decisions to make explicitly
+
+- **No symbol/string key translation needed in `dispatch`.** Ruby's
+  `dispatch` does `args.transform_keys(&:to_sym)` before calling the block,
+  because the API returns string-keyed JSON but Ruby keyword-arg blocks
+  expect symbol keys — the Ruby README even calls this out as a deliberate
+  "gotcha" left visible for learning. Python has no symbol/string duality
+  (dict keys are always `str`, and `**args` unpacks string keys straight
+  into keyword arguments), so this step of the translation simply doesn't
+  exist in the Python port — same category of accepted simplification as
+  `Config.dig`'s dropped symbol fallback in `00_config`. Recommend calling
+  this out explicitly in the Python README's "Differences from Ruby"
+  section, since it means the pedagogical point from the Ruby README
+  doesn't carry over (nothing to port, not a shortcut).
+- **`Registry.tool`'s trailing block → a plain `block` callable parameter,**
+  not a decorator. Ruby's `def tool(name, description:, parameters: {},
+  &block)` captures a trailing `do |direction:| ... end` block implicitly.
+  Python has no equivalent block-capture syntax; the two candidate
+  translations are (a) a plain keyword-only `block: Callable` parameter
+  passed at the call site (`registry.tool("move", description=...,
+  parameters=..., block=lambda *, direction: ...)`), or (b) turning `tool`
+  into a decorator factory (`@registry.tool("move", description=...)` above
+  a `def move(*, direction): ...`). Recommend (a): it's the more direct 1:1
+  port, and it matches how `01_struct_skeleton`'s `examples/example.py`
+  already passes `Tool.block` as a plain `lambda` argument — introducing a
+  decorator-based API here would be a bigger stylistic fork than "port"
+  calls for. Flagging as an open question since it's a genuine ergonomics
+  trade-off, same as the `Task`-classmethod fork point in `00_config`.
+- **Keyword-only lambdas in `examples/example.py`,** e.g.
+  `lambda *, direction: ...`, to mirror Ruby's `|direction:|` required-keyword
+  block params — not load-bearing (positional would also work since
+  `dispatch` always calls with `**args`), but keeps the example reading
+  close to the Ruby original.
+- **`dispatch`'s default arg.** Ruby's `def dispatch(name, args = {})` is
+  safe because Ruby re-evaluates literal hash defaults per call. Python needs
+  the usual `args: dict | None = None` + `args = args or {}` guard to avoid
+  the shared-mutable-default-argument pitfall — a Python idiom, not a
+  behavioural divergence.
+
+## Testing
+
+Ruby's `02_the_registry` has no automated tests, only `examples/example.rb`
+as a manual smoke test (same pattern as prior steps). Recommend:
+
+1. Port `examples/example.py` 1:1 for manual smoke-testing against the real
+   `.boukensha/` dir, same as prior steps.
+2. Carry `tests/test_config.py`, `test_tasks.py`, `test_tool.py`,
+   `test_message.py`, `test_context.py` forward unchanged (the code didn't
+   change).
+3. Add `tests/test_registry.py` covering: `tool()` registers on the context
+   and returns the `Tool`; `dispatch()` calls the right tool with the right
+   kwargs and returns its result; `dispatch()` raises `UnknownToolError` with
+   the exact Ruby-matching message for an unregistered name; `dispatch()`
+   with no `args` (tool needs none).
+
+## Open questions
+
+1. Confirm the plain `block: Callable` parameter (not a decorator) for
+   `Registry.tool` — see the design-decisions section above for the
+   trade-off.
+2. Confirm it's fine that the Python port drops the symbol/string
+   `transform_keys` "gotcha" entirely rather than trying to simulate it
+   (there's nothing to simulate — Python dict keys are already `str`).
+3. Confirm `UnknownToolError` lives in the existing `errors.py` alongside
+   `ConfigError` (rather than, say, a new `boukensha.registry` module-local
+   exception) — matches Ruby's `errors.rb` holding both concerns in one file
+   once it exists.
+
+Confirm all
