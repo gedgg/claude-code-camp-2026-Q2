@@ -14,9 +14,78 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | Step | Ruby source | Python target | Status |
 |------|-------------|----------------|--------|
 | `00_config` | `week1_baseline/ruby/00_config` | `week1_baseline/python/00_config` | ✅ done |
+| `01_struct_skeleton` | `week1_baseline/ruby/01_struct_skeleton` | `week1_baseline/python/01_struct_skeleton` | ✅ done |
 
 Nothing has been committed to git yet — everything below is working-tree
 state as of 2026-07-26.
+
+---
+
+## 01_struct_skeleton — done (2026-07-26)
+
+Plan: [`docs/plans/python_port/01_struct`](01_struct)
+
+Ported `Boukensha::Tool`/`Message`/`Context` to
+`week1_baseline/python/01_struct_skeleton/`, a fully self-contained `uv`
+project that copies `config.py`/`errors.py`/`tasks/` forward **unchanged**
+from `00_config` (mirroring the Ruby side, where each numbered step is its
+own independent gem with its own copy of `lib/boukensha/{config,tasks}.rb` —
+there is no shared Ruby gem or Python uv-workspace linking steps together).
+
+### Decisions made (answers to the plan's open questions)
+
+1. **Duplication over sharing, confirmed.** Each Python step directory stays
+   a standalone `uv` project; `01_struct_skeleton` does not depend on
+   `00_config`'s package via path dependency. Same hand-sync maintenance
+   cost the Ruby side already accepts.
+2. **`context.rb` (not the README) is the spec for `Context`, confirmed.**
+   The Ruby `README.md` documents a `token_budget` field and `to_s` examples
+   like `#<Context turns=2 tools=1 budget=8192>`, but the actual `context.rb`
+   has no such field/behaviour, and `example.rb`'s real output never prints
+   a budget. Ported with no `token_budget` field; flagged as a known
+   upstream README/code inconsistency, out of scope to fix here.
+3. **`Tool.__repr__`'s `params=` renders as `['direction']`, confirmed** —
+   Ruby's symbol-keyed hash prints `[:direction]`; Python has no symbols, so
+   `list(parameters.keys())` is the accepted, documented divergence.
+
+### What exists now
+
+```
+week1_baseline/python/01_struct_skeleton/
+  pyproject.toml, uv.lock, .python-version (3.14), .gitignore, README.md
+  src/boukensha/
+    __init__.py     # exports Config, ConfigError, Context, Message, Player, Task, Tool
+    config.py        # unchanged copy from 00_config
+    errors.py        # unchanged copy from 00_config
+    tool.py           # Tool: @dataclass(name, description, parameters, block)
+    message.py        # Message: @dataclass(role, content, tool_use_id=None)
+    context.py         # Context: task, system, messages, tools + register_tool/add_message
+    tasks/            # unchanged copy from 00_config (base.py, player.py)
+  prompts/system.md   # unchanged copy from 00_config
+  examples/example.py # 1:1 port of example.rb; verified identical output
+  tests/
+    test_config.py, test_tasks.py   # unchanged copies from 00_config (code didn't change)
+    test_tool.py, test_message.py, test_context.py   # new, 15 cases total
+
+week1_baseline/bin/python/01_struct_skeleton   # new launcher
+```
+
+### Verified
+
+- `./week1_baseline/bin/python/01_struct_skeleton` run from repo root
+  produces output matching `./week1_baseline/bin/ruby/01_struct_skeleton`
+  line-for-line, except the documented `params=['direction']` vs.
+  `params=[:direction]` divergence (no Python symbol syntax).
+- `uv run pytest -v` — 36/36 passing.
+- `uv run ruff check src examples tests` — clean.
+
+### Loose threads for the next step
+
+- `config.py`/`errors.py`/`tasks/*.py` now exist verbatim in both
+  `00_config` and `01_struct_skeleton`. If a future Ruby-side change touches
+  `Config`/`Task`/`Player`, remember to port it into **both** Python
+  directories (same as the settings.yaml/.toml sync burden noted under
+  `00_config`) — there's no automated check keeping the duplicates in sync.
 
 ---
 

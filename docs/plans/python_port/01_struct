@@ -1,0 +1,179 @@
+# Python Port Plan — Step 01 · Struct Skeleton
+
+## Purpose
+
+Port `week1_baseline/ruby/01_struct_skeleton` to Python, producing
+`week1_baseline/python/01_struct_skeleton` that is behaviourally equivalent:
+same `Tool`/`Message`/`Context` shapes, same `example.rb` console output
+(modulo the language-level `to_s` differences called out below).
+
+This is the second entry in the `docs/plans/python_port/<step>` series (see
+[`context.md`](context.md) for the index). `00_config` is done; this step
+adds the `Tool`, `Message`, and `Context` data structures on top of it.
+
+## Reference files (source of truth)
+
+| File | Role |
+|------|------|
+| `week1_baseline/ruby/01_struct_skeleton/README.md` | Design intent + illustrative (not literal) `to_s` examples |
+| `week1_baseline/ruby/01_struct_skeleton/lib/boukensha/tool.rb` | `Tool` struct: name, description, parameters, block |
+| `week1_baseline/ruby/01_struct_skeleton/lib/boukensha/message.rb` | `Message` struct: role, content, tool_use_id |
+| `week1_baseline/ruby/01_struct_skeleton/lib/boukensha/context.rb` | `Context` class: task, system, messages, tools |
+| `week1_baseline/ruby/01_struct_skeleton/lib/boukensha/config.rb` | Unchanged copy of `00_config`'s `Config` |
+| `week1_baseline/ruby/01_struct_skeleton/lib/boukensha/tasks/{base,player}.rb` | Unchanged copy of `00_config`'s `Task`/`Player` |
+| `week1_baseline/ruby/01_struct_skeleton/lib/boukensha.rb` | Top-level require list |
+| `week1_baseline/ruby/01_struct_skeleton/examples/example.rb` | Smoke test / expected console output |
+| `week1_baseline/ruby/01_struct_skeleton/Gemfile` + `.lock` | Only dependency: `dotenv` (unchanged from `00_config`) |
+| `week1_baseline/bin/ruby/01_struct_skeleton` | Repo-root launcher script |
+| `week1_baseline/python/00_config/` (entire tree) | Python-side source for the parts of this step that don't change: `config.py`, `errors.py`, `tasks/` |
+
+**Known upstream inconsistency:** the Ruby README documents `Boukensha::Context`
+as having a `token_budget` field and shows `to_s` examples like
+`#<Context turns=2 tools=1 budget=8192>`. The actual `context.rb` has no
+`token_budget` attribute and its real `to_s` is
+`#<Context task=... turns=... tools=...>` (confirmed against `example.rb`'s
+output, which never prints a budget). Per the existing "Ruby implementation is
+the spec" rule, **the `.rb` code wins over the README** — port `context.rb`
+as written, with no `token_budget` field. Worth flagging upstream, but that's
+outside this port's scope.
+
+## Why this step duplicates `00_config`'s code instead of importing it
+
+Each Ruby step directory (`ruby/00_config`, `ruby/01_struct_skeleton`, ...) is
+a fully self-contained gem — its own `Gemfile`/`.lock`, its own copy of
+`lib/boukensha/{config,tasks}.rb`, unchanged from step to step. There is no
+shared Ruby gem that later steps depend on. To stay parity-first (see
+`00_config`'s stated principle: "plan is parity, not redesign"), each Python
+step directory should be the same: a fully self-contained `uv` project, not a
+path-dependency on the previous step's package. This repo also has no
+uv-workspace file at the root, reinforcing that steps are meant to stand
+alone.
+
+So `01_struct_skeleton`'s Python package copies `config.py`, `errors.py`, and
+`tasks/` forward verbatim from `00_config` and adds `tool.py`, `message.py`,
+`context.py` on top — mirroring exactly what the Ruby side does.
+
+## Target layout
+
+```
+week1_baseline/python/01_struct_skeleton/
+  pyproject.toml               # same shape as 00_config's, updated description
+  uv.lock
+  .python-version              # "3.14"
+  README.md                    # ported from ruby/01_struct_skeleton/README.md
+  src/boukensha/
+    __init__.py                 # exports Config, ConfigError, Task, Player, Tool, Message, Context
+    config.py                   # unchanged copy from 00_config
+    errors.py                   # unchanged copy from 00_config
+    tool.py                     # Tool
+    message.py                  # Message
+    context.py                  # Context
+    tasks/
+      __init__.py                # unchanged copy from 00_config
+      base.py                    # unchanged copy from 00_config
+      player.py                  # unchanged copy from 00_config
+  prompts/
+    system.md                   # unchanged copy from 00_config
+  examples/
+    example.py                  # mirrors example.rb output
+  tests/
+    test_config.py               # unchanged copy from 00_config
+    test_tasks.py                # unchanged copy from 00_config
+    test_tool.py                 # new
+    test_message.py              # new
+    test_context.py              # new
+
+week1_baseline/bin/python/01_struct_skeleton   # new launcher, mirrors bin/python/00_config
+```
+
+## File-by-file port mapping
+
+| Ruby | Python | Notes |
+|------|--------|-------|
+| `lib/boukensha/tool.rb` | `src/boukensha/tool.py` | `Struct.new(:name, :description, :parameters, :block)` → `@dataclass` with the same 4 fields, custom `__repr__` |
+| `lib/boukensha/message.rb` | `src/boukensha/message.py` | `Struct.new(:role, :content, :tool_use_id)` → `@dataclass`, `tool_use_id` defaults to `None` |
+| `lib/boukensha/context.rb` | `src/boukensha/context.py` | `Context` class: `task`, `system`, `messages: list[Message]`, `tools: dict[str, Tool]`, `register_tool`, `add_message`, `tool_count`/`turn_count` as properties |
+| `lib/boukensha/config.rb`, `tasks/{base,player}.rb` | `src/boukensha/{config,tasks/*}.py` | Copied forward unchanged from `00_config` |
+| `lib/boukensha.rb` | `src/boukensha/__init__.py` | Re-export `Config`, `ConfigError`, `Task`, `Player`, `Tool`, `Message`, `Context` |
+| `examples/example.rb` | `examples/example.py` | Same structure: build config, register one `move` tool, add 2 messages, print everything |
+| `week1_baseline/bin/ruby/01_struct_skeleton` | `week1_baseline/bin/python/01_struct_skeleton` | Launcher, same pattern as the `00_config` pair |
+
+## Behavioural rules carried over unchanged
+
+1. **`Tool`** holds `name`, `description`, `parameters` (dict of param name →
+   `{type, description}`), and `block` (the callable invoked when the tool
+   runs — stored but never called in this step).
+2. **`Message`** holds `role`, `content`, and optional `tool_use_id` (links a
+   tool result back to the tool call that requested it).
+3. **`Context`**:
+   - `register_tool(tool)` stores by `tool.name` in a dict.
+   - `add_message(role, content, tool_use_id=None)` appends a new `Message`.
+   - `tool_count` / `turn_count` are just `len(tools)` / `len(messages)`.
+   - `task` is the **class itself** (e.g. `Player`, not `Player()`), consistent
+     with `00_config`'s classmethod-only `Task` design — `Context.__repr__`
+     calls `task.task_name()` only if `task` is not `None`.
+4. **`Config`/`Task`/`Player`** behaviour is identical to `00_config` — no
+   changes in this step.
+
+## Design decisions to make explicitly
+
+- **`Struct` → `@dataclass`.** Ruby's `Struct.new` gives mutable,
+  positionally-or-keyword-constructible value objects with a default
+  `==`/`to_s`. Python's `@dataclass` (non-frozen, so fields stay
+  reassignable like Ruby's) is the direct equivalent. Both `Tool` and
+  `Message` get a dataclass with a custom `__repr__`/`__str__` overriding the
+  generated one, to match the Ruby `to_s` format.
+- **String truncation slices.** Ruby's `content.to_s[0..60]` is an *inclusive*
+  range → 61 characters; `description.to_s[0..40]` → 41 characters. Python
+  equivalents are `content[:61]` and `description[:41]` — off-by-one is easy
+  to get wrong here, worth a unit test pinning the exact length.
+- **`params=` formatting.** Ruby's `parameters.keys` on a hash with symbol
+  keys prints as `[:direction]`. Python has no symbols — `parameters.keys()`
+  on a `dict[str, dict]` would print as `dict_keys(['direction'])` if not
+  formatted explicitly. Recommend `list(parameters.keys())` → `['direction']`
+  in the custom `__repr__`. This is an accepted, documented divergence (no
+  Python equivalent of Ruby symbol syntax), not a bug.
+- **`role` typing.** Ruby passes `:user`/`:assistant`/`:tool_result` as bare
+  symbols with no enforcement. Recommend a plain `str` field in Python (no
+  enum/`Literal`) to keep this step a straight structural port; a stricter
+  type can be introduced later once more roles/behaviour exist.
+- **`block` typing.** Ruby's `->(direction) { ... }` proc becomes a Python
+  `Callable[..., str]` (or looser `Callable`) type hint on the dataclass
+  field. Not invoked anywhere in this step — purely stored.
+- **`Context.task` typing.** Since `Task` subclasses are never instantiated,
+  `task` is typed as `type[Task] | None`, matching `Player` (the class, not
+  an instance) being passed in `examples/example.py`.
+
+## Testing
+
+Ruby's `01_struct_skeleton` has no automated tests, only `examples/example.rb`
+as a manual smoke test (same pattern as `00_config`). Recommend:
+
+1. Port `examples/example.py` 1:1 for manual smoke-testing against the real
+   `.boukensha/` dir, same as `00_config`.
+2. Carry `tests/test_config.py` and `tests/test_tasks.py` forward unchanged
+   (the code didn't change).
+3. Add `tests/test_tool.py`, `tests/test_message.py`, `tests/test_context.py`
+   covering: dataclass field access/mutability, the exact truncation lengths
+   in `__repr__`, `Message`'s optional `tool_use_id` tag, and `Context`'s
+   `register_tool`/`add_message`/`tool_count`/`turn_count`/`__repr__`
+   (including the `task=None` case).
+
+## Open questions
+
+1. Confirm the "duplicate `00_config`'s files forward" approach above (rather
+   than a path-dependency on `week1_baseline/python/00_config`) is the right
+   call for this and future steps — it mirrors what the Ruby side actually
+   does, but does mean `config.py`/`tasks/*.py` now exist in two places in the
+   repo and will need to be hand-kept-in-sync if `00_config`'s code changes
+   later (same maintenance cost the Ruby side already accepts).
+
+confirm as follow ruby pattern
+
+2. Confirm treating `context.rb` (not the README) as the spec for `Context`
+   is correct, i.e. no `token_budget` field in this step.
+confirm
+
+3. Confirm `list(parameters.keys())` (dropping Ruby's symbol-colon styling)
+   is an acceptable rendering for `Tool.__repr__`'s `params=` segment.
+sure
