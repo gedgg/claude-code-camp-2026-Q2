@@ -9,7 +9,7 @@ player_settings = config.tasks(:player)
 
 puts "=== Boukensha Step 0: Configuration ==="
 puts
-puts "Config dir:     #{config.dir}"
+puts "Config dir:     #{config.dir}"gi
 puts "Tasks:          #{config.tasks.keys.join(', ')}"
 puts
 puts "-- player task --"
