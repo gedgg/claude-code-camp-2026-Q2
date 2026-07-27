@@ -1,0 +1,304 @@
+# Python Port Plan — Step 03 · The Prompt Builder
+
+## Purpose
+
+Port `week1_baseline/ruby/03_prompt_builder` to Python, producing
+`week1_baseline/python/03_prompt_builder` that is behaviourally equivalent:
+same `PromptBuilder` shape (`to_messages`/`to_tools`/`to_api_payload`/
+`headers`/`url`), same five backends (`Anthropic`, `Gemini`, `Ollama`,
+`OllamaCloud`, `OpenAI`) with the same `MODELS` tables and cost/window
+metadata, same `UnsupportedModelError`, same `example.rb` console output
+(modulo the accepted language-level divergences already established in
+`01_struct`/`02_the_registry` plus new ones called out below).
+
+This is the fourth entry in the `docs/plans/python_port/<step>` series (see
+[`context.md`](context.md) for the index). `02_the_registry` is done; this
+step adds `PromptBuilder` and `Backends::{Base,Anthropic,Gemini,Ollama,
+OllamaCloud,OpenAI}` on top of it. No HTTP calls happen anywhere in this
+step — backends only serialize `Context` into the request payload shape
+each API expects; nothing is POSTed.
+
+`Registry`, `Tool`, `Message` are **unchanged** on the Ruby side (confirmed
+with `diff` against `02_the_registry`'s copies — byte-identical) and get
+copied forward again. `Context` is unchanged in behaviour (only a trailing
+newline differs). `Config` gained a `PROMPTS_DIR` constant on the Ruby
+side in this step — but the Python port already added `PROMPTS_DIR` back in
+`02_the_registry`'s `config.py`, so **no change is needed there**; Python is
+simply ahead of where Ruby was. `errors.rb` gains one new class,
+`UnsupportedModelError`, alongside the existing `UnknownToolError`.
+
+## Reference files (source of truth)
+
+| File | Role |
+|------|------|
+| `week1_baseline/ruby/03_prompt_builder/README.md` | Design intent, per-backend JSON examples (messages/tools/roles/tool-results), cost-table field docs |
+| `week1_baseline/ruby/03_prompt_builder/lib/boukensha/prompt_builder.rb` | `PromptBuilder`: thin delegator to whichever backend it's given |
+| `week1_baseline/ruby/03_prompt_builder/lib/boukensha/backends/base.rb` | `Backends::Base`: `MODELS`-table contract, model validation, cost/window accessors, `estimate_cost` |
+| `week1_baseline/ruby/03_prompt_builder/lib/boukensha/backends/anthropic.rb` | Anthropic serialization: `system` top-level, `tool_result` → `role: user` content block, `input_schema` |
+| `week1_baseline/ruby/03_prompt_builder/lib/boukensha/backends/gemini.rb` | Gemini serialization: `systemInstruction`, `role: model`, `functionResponse`/`functionDeclarations` |
+| `week1_baseline/ruby/03_prompt_builder/lib/boukensha/backends/ollama.rb` | Ollama (local) serialization: system as first message, `function`-wrapped tools, `tool_name` on results |
+| `week1_baseline/ruby/03_prompt_builder/lib/boukensha/backends/ollama_cloud.rb` | Ollama Cloud: identical shape to `ollama.rb`, different `headers`/`url`/auth, `nil` costs |
+| `week1_baseline/ruby/03_prompt_builder/lib/boukensha/backends/openai.rb` | OpenAI serialization: near-identical to Ollama's, `tool_call_id` on results, `max_completion_tokens` |
+| `week1_baseline/ruby/03_prompt_builder/lib/boukensha/errors.rb` | Adds `UnsupportedModelError` alongside existing `UnknownToolError` |
+| `week1_baseline/ruby/03_prompt_builder/lib/boukensha/{registry,tool,message,context}.rb`, `tasks/{base,player}.rb` | Byte-identical (or newline-only diff) vs `02_the_registry` — copy Python's existing ports forward unchanged |
+| `week1_baseline/ruby/03_prompt_builder/lib/boukensha.rb` | Top-level require list (adds `prompt_builder`, `backends/*`) |
+| `week1_baseline/ruby/03_prompt_builder/examples/example.rb` | Smoke test: registers `look`+`move`, seeds a 3-turn conversation incl. a `tool_result`, picks a backend from `tasks.player.provider`, prints the pretty-printed API payload |
+| `week1_baseline/ruby/03_prompt_builder/Gemfile` + `.lock` | Only dependency: `dotenv` (unchanged — no HTTP gem needed, this step builds payloads only) |
+| `week1_baseline/bin/ruby/03_prompt_builder` | Repo-root launcher script |
+| `week1_baseline/python/02_the_registry/` (entire tree) | Python-side source for the parts of this step that don't change: `config.py` (already has `PROMPTS_DIR`), `errors.py` (add `UnsupportedModelError`), `tool.py`, `message.py`, `context.py`, `registry.py`, `tasks/` |
+| `.boukensha/settings.toml` | Real local config already has `tasks.player.provider = "anthropic"`, `model = "claude-haiku-4-5"` — usable as-is for the example run |
+
+**Known upstream quirk to preserve, not fix** (same category as prior
+README-vs-code gaps): `PromptBuilder#to_messages` calls
+`@backend.to_messages(@context.messages)` — a **single** argument. But
+`Ollama`/`OllamaCloud`/`OpenAI`'s `to_messages` is defined as
+`to_messages(system, messages)` — **two** required arguments (they need the
+system prompt to prepend it as a `role: system` message). Calling
+`builder.to_messages` directly would raise `ArgumentError` in Ruby for
+those three backends; it only works for `Anthropic`/`Gemini`, whose
+`to_messages` takes one argument. `example.rb` never actually calls
+`builder.to_messages` directly (only `builder.to_api_payload`, which calls
+each backend's own `to_messages` internally with the right arity), so this
+never surfaces at runtime — but it's a real, reproducible inconsistency in
+the public `PromptBuilder` API. Recommend porting it faithfully (same
+arity mismatch, same `TypeError` on `builder.to_messages()` for those three
+backends) and documenting it in the Python README's differences/quirks
+section, rather than silently fixing it — fixing would be a behavioural
+fork from the Ruby original this step is meant to mirror.
+
+## Target layout
+
+```
+week1_baseline/python/03_prompt_builder/
+  pyproject.toml               # same shape as 02_the_registry's, updated description
+  uv.lock
+  .python-version              # "3.14"
+  README.md                    # ported from ruby/03_prompt_builder/README.md
+  src/boukensha/
+    __init__.py                 # exports ..., PromptBuilder, UnsupportedModelError, backends.*
+    config.py                   # unchanged copy from 02_the_registry (already has PROMPTS_DIR)
+    errors.py                   # ConfigError, UnknownToolError (unchanged) + new UnsupportedModelError
+    tool.py                     # unchanged copy from 02_the_registry
+    message.py                  # unchanged copy from 02_the_registry
+    context.py                  # unchanged copy from 02_the_registry
+    registry.py                 # unchanged copy from 02_the_registry
+    prompt_builder.py            # new: PromptBuilder
+    tasks/
+      __init__.py, base.py, player.py   # unchanged copy from 02_the_registry
+    backends/
+      __init__.py                 # exports Base, Anthropic, Gemini, Ollama, OllamaCloud, OpenAI
+      base.py                      # new: Backends.Base
+      anthropic.py                 # new
+      gemini.py                    # new
+      ollama.py                    # new
+      ollama_cloud.py              # new
+      openai.py                    # new
+  prompts/
+    system.md                   # unchanged copy from 02_the_registry
+  examples/
+    example.py                  # mirrors example.rb output
+  tests/
+    test_config.py, test_tasks.py, test_tool.py, test_message.py,
+    test_context.py, test_registry.py   # unchanged copies from 02_the_registry
+    test_prompt_builder.py        # new
+    test_backends/                # new — one file per backend, or one parametrized file
+      test_base.py
+      test_anthropic.py
+      test_gemini.py
+      test_ollama.py
+      test_ollama_cloud.py
+      test_openai.py
+
+week1_baseline/bin/python/03_prompt_builder   # new launcher, mirrors bin/python/02_the_registry
+```
+
+## File-by-file port mapping
+
+| Ruby | Python | Notes |
+|------|--------|-------|
+| `lib/boukensha/prompt_builder.rb` | `src/boukensha/prompt_builder.py` | `PromptBuilder(context, backend)`: `to_messages`, `to_tools`, `to_api_payload(max_output_tokens=1024)`, `headers`, `url` — pure delegation |
+| `lib/boukensha/backends/base.rb` | `src/boukensha/backends/base.py` | `Base`: `MODELS`-table contract, `validate_model`, instance `model_info`/`context_window`/`*_token_cost_per_million`/`usage_unit`/`usage_level`/`estimate_cost` — see naming-collision decision below |
+| `lib/boukensha/backends/anthropic.rb` | `src/boukensha/backends/anthropic.py` | 1:1, incl. `MODELS` table (4 models) |
+| `lib/boukensha/backends/gemini.rb` | `src/boukensha/backends/gemini.py` | 1:1, incl. `MODELS` table (5 models) |
+| `lib/boukensha/backends/ollama.rb` | `src/boukensha/backends/ollama.py` | 1:1, incl. `MODELS` table (9 models), default `host="http://localhost:11434"` |
+| `lib/boukensha/backends/ollama_cloud.rb` | `src/boukensha/backends/ollama_cloud.py` | 1:1, incl. `MODELS` table (3 models, `nil`/`None` costs, `usage_level`) |
+| `lib/boukensha/backends/openai.rb` | `src/boukensha/backends/openai.py` | 1:1, incl. `MODELS` table (3 models) |
+| `lib/boukensha/errors.rb` | `src/boukensha/errors.py` | `UnsupportedModelError(Exception)` added to the existing file |
+| `lib/boukensha/{registry,tool,message,context}.rb`, `tasks/*.rb` | `src/boukensha/{...}.py` | Copied forward unchanged from `02_the_registry` |
+| `lib/boukensha.rb` | `src/boukensha/__init__.py`, `src/boukensha/backends/__init__.py` | Add `PromptBuilder`, `UnsupportedModelError`, and the five backend classes to exports |
+| `examples/example.rb` | `examples/example.py` | Same structure: build config/context/registry, register `look`+`move`, seed 3 messages (incl. a `tool_result`), pick a backend class from `tasks.player.provider` via `match`, build `PromptBuilder`, print pretty JSON payload |
+| `week1_baseline/bin/ruby/03_prompt_builder` | `week1_baseline/bin/python/03_prompt_builder` | Launcher, same pattern as prior pairs |
+
+## Behavioural rules carried over unchanged
+
+1. **`PromptBuilder`** is a pure delegator: `to_messages`/`to_tools` forward
+   to the backend, `to_api_payload(max_output_tokens=1024)` forwards to
+   `backend.to_payload(context, max_output_tokens=...)`, `headers`/`url`
+   forward with no arguments. No logic of its own.
+2. **A backend refuses to construct with an unknown model.** `configure_model`
+   (called from every backend's `__init__`) validates the model against the
+   class's own `MODELS` table and raises `UnsupportedModelError` — with the
+   exact same message shape as Ruby: `"{ClassName} does not support model
+   '{model}'. Supported models: {sorted, comma-joined list}"` (see the
+   class-name divergence noted below).
+3. **`estimate_cost(input_tokens, output_tokens)`** returns `None` when
+   either cost-per-million value is `None` (Ollama Cloud — usage-based
+   pricing has no public per-token rate), returns `0.0` for local Ollama
+   (real `0.0` rates, not `None`), and otherwise computes
+   `(input_tokens * input_cost + output_tokens * output_cost) / 1_000_000.0`.
+4. **System-prompt placement diverges by backend, not by any shared code
+   path:** Anthropic/Gemini emit it as a top-level field (`system` /
+   `systemInstruction`); Ollama/OllamaCloud/OpenAI prepend it as the first
+   `role: "system"` message inside the messages array. Each backend does
+   this independently — there is no shared "system-prompt strategy" object
+   in Ruby, and the Python port should not invent one (see the
+   duplication-vs-sharing decision below).
+5. **Tool-result message shape diverges by backend:** Anthropic wraps it in
+   a `role: user` message with a `tool_result` content block keyed by
+   `tool_use_id`; Ollama/OllamaCloud use `role: "tool"` with `tool_name`;
+   OpenAI uses `role: "tool"` with `tool_call_id`; Gemini wraps it in a
+   `role: user` message with a `functionResponse` part keyed by `name`. All
+   four read `msg.tool_use_id` off the same `Message` struct — the field
+   name doesn't change, only how each backend re-labels it in its own
+   payload shape.
+6. **Model dictionaries are class-level, not computed.** Every `MODELS`
+   table is a plain literal mapping from model-id string to a metadata dict
+   with `context_window`, `cost_per_million` (`input`/`output`, possibly
+   `None`), `usage_unit`, and optionally `usage_level` (Ollama Cloud only)
+   and `advertised_context_window` (one Ollama Cloud model only, currently
+   unused by any accessor — carried forward as inert data, matching Ruby).
+
+## Design decisions to make explicitly
+
+- **`Backends::Base`'s class-method/instance-method name collision on
+  `model_info` has no direct Python translation and must be resolved.**
+  Ruby cleanly separates `self.model_info(model)` (class method: look up an
+  arbitrary model's metadata in the table) from `model_info` (instance
+  method: return the *configured instance's* resolved metadata) — same
+  name, different namespaces. Python classmethods and instance
+  methods/properties can't share one name in the same class body. Recommend:
+  - `classmethod models(cls)` → the `MODELS` table (raises
+    `NotImplementedError` if a subclass hasn't defined `MODELS`, mirroring
+    Ruby's `rescue NameError`)
+  - `classmethod lookup_model(cls, model)` → `cls.models().get(str(model))`
+    (renamed from Ruby's class-level `model_info`, since that name is
+    claimed by the instance property below)
+  - `classmethod validate_model(cls, model)` → returns the validated model
+    string or raises `UnsupportedModelError`
+  - instance `@property model_info` → returns `self._model_info`, set by
+    `configure_model` (an instance method every backend's `__init__` calls)
+  This preserves every public behaviour; only the *class-level* lookup
+  method's name changes (`model_info(model)` → `lookup_model(model)`),
+  which no external caller in this step depends on directly.
+- **`estimate_cost`/`context_window`/etc. use direct dict indexing
+  (`self.model_info["context_window"]`), not `.get()`,** to mirror Ruby's
+  `model_info.fetch(:context_window)` — a missing key should raise
+  (`KeyError` in Python, matches `.fetch`'s `KeyError` in Ruby), not
+  silently return `None`. `usage_level` is the one exception in Ruby
+  (`model_info[:usage_level]`, no `fetch`, since most backends don't set
+  it) — port that one as `self.model_info.get("usage_level")`.
+- **Error message class-name divergence, accepted.** Ruby's
+  `UnsupportedModelError` message embeds `self.name` inside the class
+  method context, which resolves to the fully-qualified Ruby class name
+  (e.g. `"Boukensha::Backends::Anthropic does not support model..."`).
+  Python's natural equivalent, `cls.__name__`, yields just `"Anthropic"`.
+  Recommend accepting the shorter, unqualified name — same category as the
+  `params=['direction']` vs `params=[:direction]` divergence already
+  accepted in `01_struct_skeleton`, and matching everywhere else in the
+  Python port that a Ruby-qualified name has been simplified.
+- **`MODELS` tables use plain nested dicts with string keys, not a
+  dataclass or `TypedDict`.** Ruby uses a plain frozen `Hash` literal per
+  class; introducing a `ModelInfo` dataclass in Python would be a bigger
+  structural fork than "port" calls for, and nothing downstream needs
+  static typing on this data (it's read via string/`.get()` lookups
+  throughout, same as Ruby's symbol-hash access). Ruby symbol keys
+  (`:context_window`, `:input`, `:tokens`, `:medium`, …) become plain
+  Python strings, same translation already used for `Tool.parameters`
+  keys.
+- **Ollama/OllamaCloud/OpenAI's near-identical `to_messages`/`to_tools`
+  bodies are kept duplicated across the three files, not extracted into a
+  shared mixin/base helper.** Ruby repeats the same
+  function-wrapped-tool-schema code three times rather than factoring it
+  out, even though it's byte-for-byte identical logic in `to_tools` across
+  all three backends. This is a genuine "more Pythonic" temptation to
+  resist: this codebase is structured 1:1 per Ruby file for pedagogical
+  clarity (each backend file is meant to be read standalone), matching the
+  precedent set by every prior step of mirroring Ruby's file boundaries
+  rather than DRYing them up. Flagging as an open question since it's a
+  real trade-off, not a mechanical translation choice.
+- **`example.py` backend selection uses a `match` statement** (Python
+  3.10+, and this project already requires `>=3.14`) on `provider`, mirroring
+  Ruby's `case provider; when "anthropic" ... end`. Falls through to
+  raising `ConfigError` (not a bare `ValueError`, keeping with `00_config`'s
+  established precedent of using the project's own error types) for an
+  unrecognized provider string — matching Ruby's `raise ArgumentError,
+  "Unsupported provider for player task: #{provider}"` translated the same
+  way `ArgumentError → ConfigError` was translated back in `00_config`.
+- **API keys read via `os.environ["ANTHROPIC_API_KEY"]`** (raises `KeyError`
+  if unset), matching Ruby's `ENV.fetch("ANTHROPIC_API_KEY")` (raises
+  `KeyError` if unset) — not `os.environ.get(...)`, which would silently
+  pass `None` as the API key instead of failing fast.
+- **`json.dumps(builder.to_api_payload(), indent=2)`** as the Python
+  equivalent of `JSON.pretty_generate(...)`. Output won't be
+  byte-identical (Ruby and Python pretty-printers format arrays/spacing
+  slightly differently), but the *data* is equivalent — same category of
+  cosmetic-only divergence as prior steps' `to_s`/`__repr__` differences.
+
+## Testing
+
+Ruby's `03_prompt_builder` has no automated tests, only `examples/example.rb`
+as a manual smoke test (same pattern as prior steps). Recommend:
+
+1. Port `examples/example.py` 1:1 for manual smoke-testing against the real
+   `.boukensha/` dir (already configured for `provider = "anthropic"`,
+   `model = "claude-haiku-4-5"` — both valid per `Anthropic::MODELS`).
+2. Carry `tests/test_config.py`, `test_tasks.py`, `test_tool.py`,
+   `test_message.py`, `test_context.py`, `test_registry.py` forward
+   unchanged (the code didn't change).
+3. Add `tests/test_prompt_builder.py`: a fake/minimal backend double
+   confirms `to_messages`/`to_tools`/`to_api_payload`/`headers`/`url` all
+   delegate with the right arguments (esp. `max_output_tokens` flowing
+   through to `to_payload`).
+4. Add per-backend test coverage (one file per backend, or one
+   parametrized suite) checking, against the README's own JSON examples:
+   - `to_messages`/`to_tools`/`to_payload` shape matches the documented
+     examples for each of the four message-role cases (user, assistant,
+     tool_result, and — Gemini only — the `model` role rename)
+   - system-prompt placement (top-level field vs. injected `role: system`
+     message) per backend
+   - `headers`/`url` per backend (incl. Gemini's model-interpolated URL,
+     Ollama's configurable `host`)
+   - `validate_model`/`UnsupportedModelError` — unknown model raises with
+     the sorted supported-models list in the message
+   - `estimate_cost`: normal token-priced backend, local Ollama (`0.0`, not
+     `None`), Ollama Cloud (`None`, unpriced)
+   - the accepted `PromptBuilder.to_messages` arity-mismatch quirk:
+     confirm it raises `TypeError` for Ollama/OllamaCloud/OpenAI and
+     succeeds for Anthropic/Gemini, so the quirk is pinned down by a test
+     rather than silently reintroduced or silently fixed later
+
+## Open questions
+
+1. Confirm the `model_info` class-method/instance-property naming
+   resolution above (`lookup_model` for the class-level lookup, `model_info`
+   kept as the instance property) — see the design-decisions section for
+   the full rationale; this is the one required rename with no 1:1 Ruby
+   equivalent.
+2. Confirm accepting the unqualified `cls.__name__` in
+   `UnsupportedModelError` messages (`"Anthropic does not support..."`) over
+   trying to reconstruct Ruby's fully-qualified `"Boukensha::Backends::
+   Anthropic"`.
+3. Confirm keeping Ollama/OllamaCloud/OpenAI's duplicated
+   `to_messages`/`to_tools` bodies rather than factoring out a shared
+   helper/mixin — recommended for fidelity to Ruby's one-file-per-backend
+   structure, but flagging since it's a real "more Pythonic" trade-off,
+   not a mechanical choice.
+4. Confirm porting the `PromptBuilder.to_messages` arity mismatch
+   faithfully (raises `TypeError` for three of five backends) rather than
+   quietly fixing it, per the "known upstream quirk" note above.
+5. Confirm test layout: one `tests/test_backends/test_<name>.py` per
+   backend vs. a single parametrized `tests/test_backends.py` — either
+   satisfies the testing plan above; picking one is a style call, not a
+   behavioural one.
+
+Confirm all

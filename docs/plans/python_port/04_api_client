@@ -1,0 +1,258 @@
+# Python Port Plan — Step 04 · The API Client
+
+## Purpose
+
+Port `week1_baseline/ruby/04_api_client` to Python, producing
+`week1_baseline/python/04_api_client` that is behaviourally equivalent:
+same `Client#call` shape (POST the built payload, retry transient
+failures/retryable status codes with exponential backoff, raise `ApiError`
+on final failure, return the parsed JSON body), stdlib-only, no new
+third-party dependencies — matching the Ruby README's explicit "no gems"
+design intent for this step.
+
+This is the fifth entry in the `docs/plans/python_port/<step>` series (see
+[`context.md`](context.md) for the index). `03_prompt_builder` is the
+direct predecessor (not yet ported at the time of this writing — see its
+plan at [`03_prompt_builder`](03_prompt_builder)); this step adds
+`Boukensha::Client` on top of it. One HTTP POST, one response — still no
+tool-calling loop (that's `05_agent_loop`).
+
+Confirmed via `diff` against `03_prompt_builder`: `backends/*.rb`,
+`prompt_builder.rb`, `registry.rb`, `tool.rb`, `message.rb`, `context.rb`
+are **byte-identical**. (The Ruby README's "New/Updated Files" tables claim
+`backends/base.rb` and `backends/*.rb` changed in this step — they did not;
+see the known-inconsistency note below.) `tasks/base.rb` gets one real
+behavioural fix; `config.rb` gets one line that looks like a fix but is
+actually a new bug; `errors.rb` adds `ApiError`.
+
+## Reference files (source of truth)
+
+| File | Role |
+|------|------|
+| `week1_baseline/ruby/04_api_client/README.md` | Design intent, `Client` docs, raw-response JSON examples per backend, "no dependencies" rationale |
+| `week1_baseline/ruby/04_api_client/lib/boukensha/client.rb` | `Client`: builds the request from a `PromptBuilder`, retries transient errors/retryable status codes, raises `ApiError`, returns parsed JSON |
+| `week1_baseline/ruby/04_api_client/lib/boukensha/errors.rb` | Adds `ApiError` alongside `UnknownToolError`, `UnsupportedModelError` |
+| `week1_baseline/ruby/04_api_client/lib/boukensha/tasks/base.rb` | Real fix: private `fetch` now guards `settings.is_a?(Hash)` before indexing (was previously assumed to always be a Hash) |
+| `week1_baseline/ruby/04_api_client/lib/boukensha/config.rb` | `PROMPTS_DIR` changed from `"../../prompts"` to `"../../../prompts"` — **this is a bug, not a fix; see below** |
+| `week1_baseline/ruby/04_api_client/lib/boukensha/{prompt_builder,registry,tool,message,context}.rb`, `backends/*.rb`, `tasks/player.rb` | Byte-identical to `03_prompt_builder` — copy Python's existing ports forward unchanged |
+| `week1_baseline/ruby/04_api_client/lib/boukensha.rb` | Top-level require list (adds `client`) |
+| `week1_baseline/ruby/04_api_client/examples/example.rb` | Smoke test: registers `read_file`+`list_directory`, seeds one user message, builds a backend from `tasks.player`, sends one real request via `Client#call`, pretty-prints the raw JSON response |
+| `week1_baseline/ruby/04_api_client/Gemfile` + `.lock` | Only dependency: `dotenv` — `Client` itself uses only `net/http`/`json`/`openssl` from the Ruby stdlib |
+| `week1_baseline/bin/ruby/04_api_client` | Repo-root launcher script |
+| `week1_baseline/python/03_prompt_builder/` (planned tree, per [`03_prompt_builder`](03_prompt_builder)) | Python-side source for the parts of this step that don't change |
+
+**Known upstream bug — do not replicate.** `config.rb`'s `PROMPTS_DIR`
+changed from `File.expand_path("../../prompts", __dir__)` (correct, used in
+`03_prompt_builder`) to `File.expand_path("../../../prompts", __dir__)` —
+one `../` too many. Traced with `ruby -e`: this resolves to
+`week1_baseline/ruby/prompts`, a directory that **does not exist** (each
+step ships its own `prompts/system.md`; there is no shared top-level
+`ruby/prompts/`). The bug is currently silent in practice because
+`.boukensha/settings.toml` sets `tasks.player.prompt_override.system =
+true`, so the user-override path (`~/.boukensha/prompts/player/system.md`)
+is read instead and the broken default path is never reached — but if
+`prompt_override.system` were `false`, `Task.system_prompt` would silently
+return `nil` instead of the shipped default prompt. This is a genuine
+regression (introduced in this step, still present in `05_agent_loop`),
+not a deliberate design choice like the `PromptBuilder#to_messages` arity
+quirk noted in the `03_prompt_builder` plan. **Recommend the Python port
+keep `PROMPTS_DIR` correctly pointing at this step's own `prompts/`
+directory** (same computation already used in `02_the_registry`/
+`03_prompt_builder`'s `config.py`), and note the Ruby-side bug here for
+awareness rather than faithfully reproducing a defect with no pedagogical
+purpose.
+
+**Known upstream README inconsistency** (no action needed): the "Updated
+Files" table lists `lib/boukensha/backends/*.rb` as changed in this step
+("Backends now own supported model tables..."), but `diff` against
+`03_prompt_builder` shows zero changes to any backend file — that work was
+already done in `03_prompt_builder`. Likely boilerplate copied from a
+later step's README. Same category as the stale-path/`token_budget` notes
+in earlier plans.
+
+## Target layout
+
+```
+week1_baseline/python/04_api_client/
+  pyproject.toml               # same shape as 03_prompt_builder's, updated description
+  uv.lock
+  .python-version              # "3.14"
+  README.md                    # ported from ruby/04_api_client/README.md
+  src/boukensha/
+    __init__.py                 # exports ..., Client, ApiError
+    config.py                   # unchanged copy from 03_prompt_builder (PROMPTS_DIR NOT changed — see bug note above)
+    errors.py                   # ConfigError, UnknownToolError, UnsupportedModelError (unchanged) + new ApiError
+    tool.py, message.py, context.py, registry.py, prompt_builder.py   # unchanged copies
+    tasks/
+      __init__.py, player.py    # unchanged
+      base.py                   # +settings-is-a-dict guard (real behavioural fix, ported)
+    backends/                   # unchanged copies from 03_prompt_builder
+      __init__.py, base.py, anthropic.py, gemini.py, ollama.py, ollama_cloud.py, openai.py
+    client.py                    # new: Client
+  prompts/
+    system.md                   # unchanged copy
+  examples/
+    example.py                  # mirrors example.rb output
+  tests/
+    test_config.py, test_tasks.py, test_tool.py, test_message.py,
+    test_context.py, test_registry.py, test_prompt_builder.py,
+    test_backends/                # unchanged copies from 03_prompt_builder
+    test_client.py                # new — mocks the HTTP layer, no real network calls
+
+week1_baseline/bin/python/04_api_client   # new launcher, mirrors bin/python/02_the_registry
+```
+
+## File-by-file port mapping
+
+| Ruby | Python | Notes |
+|------|--------|-------|
+| `lib/boukensha/client.rb` | `src/boukensha/client.py` | `Client(builder)`: `call(max_output_tokens=1024)` — builds request, retries, raises `ApiError`, returns parsed JSON dict |
+| `lib/boukensha/errors.rb` | `src/boukensha/errors.py` | `ApiError(Exception)` added |
+| `lib/boukensha/tasks/base.rb` | `src/boukensha/tasks/base.py` | Add the `settings` non-dict guard to the internal settings-lookup helper (see design decision below) |
+| `lib/boukensha/config.rb` | `src/boukensha/config.py` | **No change** — keep the already-correct `PROMPTS_DIR`; do not port the Ruby `../../../` regression |
+| `lib/boukensha/{prompt_builder,registry,tool,message,context}.rb`, `backends/*.rb`, `tasks/player.rb` | `src/boukensha/{...}.py` | Copied forward unchanged from `03_prompt_builder` |
+| `lib/boukensha.rb` | `src/boukensha/__init__.py` | Add `Client`, `ApiError` to exports |
+| `examples/example.rb` | `examples/example.py` | Same structure: register `read_file`+`list_directory`, one user message, build backend from `tasks.player`, `client.call()`, pretty-print raw response |
+| `week1_baseline/bin/ruby/04_api_client` | `week1_baseline/bin/python/04_api_client` | Launcher, same pattern as prior pairs |
+
+## Behavioural rules carried over unchanged
+
+1. **Retry policy:** retryable HTTP status codes `{408, 409, 429, 500, 502,
+   503, 504}` and a fixed set of transient network errors both trigger a
+   retry, up to `MAX_RETRIES = 3` attempts, with exponential backoff
+   `BASE_RETRY_DELAY * 2**(attempt - 1)` (`0.5s, 1.0s, 2.0s`) between
+   attempts.
+2. **Final failure raises `ApiError`**, not a bare exception — with a
+   message distinguishing "failed after N attempts: {exception}" (transient
+   network errors) from "failed after N attempt(s) ({status}): {body}"
+   (non-2xx response that exhausted retries or wasn't retryable).
+3. **A non-2xx, non-retryable response fails immediately** without
+   consuming retry attempts — matches Ruby's `retryable_response?` gate
+   inside the loop (a 404, say, breaks out of the loop on first attempt and
+   fails the `HTTPSuccess` check right after).
+4. **Successful response body is parsed as JSON and returned as a plain
+   dict** (`response.json()`-shaped) — the raw, unnormalized, per-backend
+   response shape. No interpretation of `stop_reason`/tool calls happens
+   here; that's `05_agent_loop`'s `parse_response`.
+5. **SSL only for `https` URLs** (Ollama's local `http://localhost:11434`
+   endpoint needs none); the request always sends `Content-Type` plus
+   whatever `builder.headers` returns (API key headers, etc.), and the body
+   is `builder.to_api_payload(max_output_tokens=...)` JSON-encoded.
+
+## Design decisions to make explicitly
+
+- **Use `urllib.request` (stdlib), not `requests`/`httpx`.** The Ruby
+  README is explicit that avoiding gems for the HTTP layer is intentional
+  pedagogy ("This is intentional — the HTTP call itself is trivial and
+  should be visible, not hidden behind a library"). Python's stdlib
+  `urllib.request` is the direct equivalent of Ruby's `net/http` here —
+  same "stdlib first" principle already applied to `00_config`'s TOML
+  choice. `pyproject.toml` gains no new dependency for this step.
+- **`urlopen` raises on non-2xx; Ruby's `Net::HTTP#request` does not — this
+  needs unifying, not just translating.** Ruby's `http.request(request)`
+  always returns an `HTTPResponse` object, even for a 500, and the code
+  checks `response.is_a?(Net::HTTPSuccess)` afterward. Python's
+  `urllib.request.urlopen` *raises* `urllib.error.HTTPError` (a subclass of
+  `OSError`, carrying `.code` and `.read()`) for any non-2xx status instead
+  of returning a response object. Recommend catching `HTTPError`
+  immediately around the request call and treating it exactly like a
+  non-success response for the `retryable_response?`/final-`ApiError`
+  logic (extract `.code` and `.read()` from it) — i.e. the Python `call()`
+  needs one more `except` clause than the Ruby version's `begin/rescue`
+  around `http.request`, but the *policy* (retry if status is in the
+  retryable set and attempts remain, else fail) stays identical.
+- **Transient-error class mapping** (Ruby `TRANSIENT_ERRORS` → Python
+  equivalents to catch alongside `HTTPError`):
+  | Ruby | Python |
+  |------|--------|
+  | `EOFError` | `http.client.RemoteDisconnected` |
+  | `Errno::ECONNRESET` | `ConnectionResetError` |
+  | `Errno::ECONNREFUSED` | `ConnectionRefusedError` |
+  | `Net::OpenTimeout`, `Net::ReadTimeout`, `Timeout::Error` | `TimeoutError`, `socket.timeout` |
+  | `OpenSSL::SSL::SSLError` | `ssl.SSLError` |
+  | `SocketError` | `urllib.error.URLError` (covers DNS failure, connection refused wrapped by urllib, etc.) |
+  Recommend catching `urllib.error.URLError` broadly (it wraps most
+  low-level socket/DNS/SSL failures raised through `urlopen`) plus the
+  specific `ConnectionResetError`/`ConnectionRefusedError`/`TimeoutError`/
+  `ssl.SSLError`/`http.client.RemoteDisconnected` subclasses explicitly, so
+  the retry net is at least as wide as Ruby's.
+- **No explicit SSL context/cert-file workaround needed.** Ruby's
+  `client.rb` has a commented-out `ca_file = OpenSSL::X509::DEFAULT_CERT_FILE`
+  line with a note that it broke on Linux/WSL2 (path doesn't exist) so it
+  was removed, relying on OpenSSL's automatic system-cert discovery.
+  Python's `urllib.request` (via `ssl.create_default_context()`) already
+  verifies against the system CA store by default and works uniformly
+  across platforms — no equivalent workaround/comment needed; this is a
+  point where Python's stdlib avoids a wrinkle Ruby's has to call out.
+- **`response.json()`-equivalent uses `json.loads(response.read())`,
+  string keys throughout** — matches Ruby's `JSON.parse(response.body)`
+  default (`symbolize_names: false`, i.e. string keys), so unlike the
+  `Tool`/`Message` struct fields elsewhere in this port, there is **no**
+  symbol-vs-string divergence to note here — both languages already
+  produce string-keyed data for parsed API responses.
+- **Port `tasks/base.rb`'s new `settings.is_a?(Hash)` guard as a real fix,
+  not a stylistic no-op.** Currently (per `03_prompt_builder`'s port)
+  `Task.provider`/`.model`/etc. call `settings.get(...)` directly; if
+  `settings` were ever `None` (e.g. `config.tasks("missing_task")` returns
+  `None`) this raises `AttributeError` instead of the intended
+  `ConfigError`. Ruby's fix wraps the private `fetch` helper with `return
+  nil unless settings.is_a?(Hash)`. Recommend the Python equivalent: guard
+  the settings-lookup path so a non-dict `settings` (including `None`)
+  resolves to `None` and flows into the existing "required in
+  settings.toml" `ConfigError`, rather than crashing with the wrong
+  exception type.
+- **Ruby's `tasks/base.rb` also tweaks its own error-message wording**
+  (`"in settings.yml"` → `"in settings.yaml"`, fixing a pre-existing typo).
+  **No Python change needed** — Python's `tasks/base.py` already says
+  `"...required in settings.toml"` (established back in `00_config`, since
+  Python reads TOML, not YAML), so this Ruby wording fix has nothing to
+  port against.
+
+## Testing
+
+Ruby's `04_api_client` has no automated tests, only `examples/example.rb`
+(which makes a real network call). Recommend:
+
+1. Port `examples/example.py` 1:1 for manual smoke-testing against a real
+   `.boukensha/` dir and a real API key — this genuinely hits the network,
+   same as Ruby's version.
+2. Carry all `02_the_registry`/`03_prompt_builder` test files forward
+   unchanged.
+3. Add `tests/test_client.py` with **no real network calls** — mock at the
+   `urllib.request.urlopen` boundary (e.g. monkeypatch or a fake opener)
+   to cover:
+   - a clean 200 response → `call()` returns the parsed JSON dict
+   - a single retryable failure (e.g. 503) followed by a 200 → succeeds
+     after one retry, sleeps once with the expected backoff (patch
+     `time.sleep` to assert on delay/call count without actually sleeping)
+   - retries exhausted on a persistently-retryable status → raises
+     `ApiError` after exactly `MAX_RETRIES + 1` attempts
+   - a non-retryable status (e.g. 404) → raises `ApiError` immediately,
+     with only one attempt made
+   - a transient network exception (e.g. `ConnectionResetError`) retried
+     and then succeeding, and exhausting retries → `ApiError`
+   - `headers`/`url`/body are built correctly from the `PromptBuilder`
+     (right method, right JSON body, right per-backend headers)
+4. Add a `Task.provider`/`Task.model` regression test for the
+   non-dict-`settings` guard (`Task.provider(None)` raises `ConfigError`,
+   not `AttributeError`).
+
+## Open questions
+
+1. Confirm **not** porting the `PROMPTS_DIR` off-by-one-`../` regression —
+   keep Python's `config.py` pointing at this step's own `prompts/`
+   directory, as it already does. This is the one place in this plan where
+   "port faithfully" is explicitly overridden because the source is simply
+   broken, not stylistically different.
+2. Confirm the `HTTPError`-as-response-object unification approach for
+   `urlopen` (catch it alongside genuine transient errors, extract
+   `.code`/`.read()`, feed into the same retry/final-`ApiError` logic) as
+   the correct translation of Ruby's "always get a response object" model.
+3. Confirm the transient-exception mapping table above is an acceptable
+   "at least as wide a net" translation, since there's no 1:1 Ruby-class
+   to Python-exception mapping for every entry.
+4. Confirm porting the `settings.is_a?(Hash)` guard into `tasks/base.py` as
+   a genuine bug fix (not just cosmetic parity) — this is new defensive
+   behaviour, not present in the `03_prompt_builder` Python port yet.
+
+Confirm all

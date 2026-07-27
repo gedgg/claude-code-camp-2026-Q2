@@ -16,9 +16,73 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | `00_config` | `week1_baseline/ruby/00_config` | `week1_baseline/python/00_config` | ✅ done |
 | `01_struct_skeleton` | `week1_baseline/ruby/01_struct_skeleton` | `week1_baseline/python/01_struct_skeleton` | ✅ done |
 | `02_the_registry` | `week1_baseline/ruby/02_the_registry` | `week1_baseline/python/02_the_registry` | ✅ done |
+| `03_prompt_builder` | `week1_baseline/ruby/03_prompt_builder` | `week1_baseline/python/03_prompt_builder` | ⬜ planned |
+| `04_api_client` | `week1_baseline/ruby/04_api_client` | `week1_baseline/python/04_api_client` | ⬜ planned |
+| `05_agent_loop` | `week1_baseline/ruby/05_agent_loop` | `week1_baseline/python/05_agent_loop` | ⬜ planned |
 
 Nothing has been committed to git yet — everything below is working-tree
-state as of 2026-07-26.
+state as of 2026-07-26. Plans for `03`–`05` were written 2026-07-27, ahead
+of implementation, so a future porting session can start straight from
+them.
+
+---
+
+## 03_prompt_builder / 04_api_client / 05_agent_loop — planned, not yet ported (2026-07-27)
+
+Plans: [`03_prompt_builder`](03_prompt_builder), [`04_api_client`](04_api_client),
+[`05_agent_loop`](05_agent_loop)
+
+Written by examining the Ruby sources directly (`diff`-ing each step
+against its predecessor to isolate real changes from README boilerplate)
+rather than against an existing Python port, since none of the three exist
+in `week1_baseline/python/` yet. Each plan follows the established
+Purpose / Reference files / Target layout / File-by-file mapping /
+Behavioural rules / Design decisions / Testing / Open questions structure
+from `00_config`–`02_the_registry`.
+
+Notable findings surfaced while planning (full detail in each plan file):
+
+- **`03_prompt_builder`** introduces `PromptBuilder` and five
+  `Backends::*` classes (payload serialization only — no HTTP yet). Found
+  a real Ruby quirk: `PromptBuilder#to_messages` always calls the backend
+  with one argument, but three of five backends require two — never
+  triggered because `example.rb` only calls `to_api_payload`. Recommend
+  porting the quirk faithfully and pinning it with a test. Also flagged: no
+  Python translation for Ruby's `self.model_info`(class method)/
+  `model_info`(instance method) name reuse — proposed renaming the
+  class-level lookup to `lookup_model`.
+- **`04_api_client`** introduces `Client` (stdlib-only HTTP, retries,
+  `ApiError`). Found a real **bug**, not a quirk: `config.rb`'s
+  `PROMPTS_DIR` gains an extra `../` and resolves to a directory that
+  doesn't exist (`ruby/prompts`, vs. the correct `ruby/04_api_client/
+  prompts`) — silently masked today because `.boukensha/settings.toml` sets
+  `prompt_override.system = true`. Recommended the Python port **not**
+  replicate this one, unlike other Ruby-side idiosyncrasies this series has
+  otherwise preserved. Also found `urlopen` raises on non-2xx where Ruby's
+  `Net::HTTP` returns a response object — needs explicit unification in the
+  retry logic, not just a mechanical translation.
+- **`05_agent_loop`** introduces `Agent` (the tool-calling loop) and a
+  normalized `{stop_reason, content}` response shape every backend must
+  produce via new `parse_response`/`_assistant_message`/`_assistant_parts`
+  methods. Found `LoopError` is defined in `errors.rb` but never actually
+  raised anywhere in this step (dead code, ported for structural parity
+  only). Flagged a real Ruby/Python truthiness trap: `@max_output_tokens ?
+  ... : {}` relies on Ruby's `0`-is-truthy semantics, which needs an
+  explicit `is not None` check in Python rather than a naive truthy check.
+
+### Loose threads for whoever ports these
+
+- None of `03`–`05` exist under `week1_baseline/python/` yet — these are
+  plans only. The next session should implement `03_prompt_builder` first
+  (the others build directly on it) and update this file's status column
+  as each lands, following the `## <step> — done (<date>)` write-up
+  pattern established below for `00`–`02`.
+- All three plans assume `02_the_registry`'s Python tree as the unchanged
+  carry-forward baseline (`config.py`/`tool.py`/`message.py`/`context.py`/
+  `registry.py`/`tasks/*.py`) — if anything in that tree changes before
+  `03_prompt_builder` is actually implemented, re-check these plans' "unchanged
+  copy" assumptions against the real files rather than trusting the plan
+  text blindly.
 
 ---
 
