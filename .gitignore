@@ -4,3 +4,8 @@
 # Environment / secrets
 .env
 .env.local
+/node_modules
+/preview/data
+/preview/world
+/.claude
+log_viz/
