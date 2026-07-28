@@ -1,0 +1,351 @@
+# Python Port Plan — Step 09 · Global Executable
+
+## Purpose
+
+Port `week1_baseline/ruby/09_global_executable` to Python, producing
+`week1_baseline/python/09_global_executable` that is behaviourally
+equivalent: a real, installable command that works from any directory on
+the machine, resolving *which* step's source to actually run in this
+priority order — (1) a `BOUKENSHA_PATH` env var pointing at an arbitrary
+step folder, (2) a `~/.boukensharc` file containing a single path, (3) the
+step bundled inside the installed package itself (this step's own `src/
+boukensha/`, i.e. "the latest release") — then boots the interactive REPL
+against whichever was resolved.
+
+**Command name: `boukensha-py`, not `boukensha`.** The Ruby gem already
+installs a real `boukensha` executable on this machine (confirmed:
+`gem install` puts it at `~/.local/share/gem/ruby/3.3.0/bin/boukensha`).
+Both implementations are meant to coexist for side-by-side comparison, not
+replace one another, so the Python console script is named `boukensha-py`
+deliberately — this avoids depending on `$PATH` ordering to decide which
+`boukensha` wins (fragile and installation-order-dependent) and lets both
+be run deterministically in the same shell. Every `boukensha` reference in
+this plan (READMEs, `[project.scripts]`, error messages, the `debug`
+loading-from line) means `boukensha-py` for the Python port — noted once
+here rather than repeated at every occurrence.
+
+This is the tenth entry in the `docs/plans/python_port/<step>` series (see
+[`context.md`](context.md) for the index). `08_the_repl_loop` is the direct
+predecessor (not yet ported at the time of this writing — see
+[`08_the_repl_loop`](08_the_repl_loop)); this step doesn't add a new
+in-process primitive so much as it changes the *distribution model* — from
+"a folder you `bundle exec` inside" to "a command on your `$PATH`."
+
+**Note on this step's real, working Ruby state (important for scoping the
+port):** `09_global_executable` has **no `examples/` directory at all**
+(removed relative to `08_the_repl_loop`) and **no `bin/ruby/
+09_global_executable` launcher script exists anywhere in this repo** —
+confirmed by checking `week1_baseline/bin/ruby/`, which jumps from `08_
+the_repl_loop` straight to `10_standard_tool_library`. This is not an
+oversight to fix; it's the whole point of the step. There is nothing to
+`ruby examples/whatever.rb` here — the deliverable *is* the installed
+`boukensha` command, exercised by actually installing it and running it
+from an arbitrary directory. The Python port should follow suit: **no
+`examples/example.py` and no `week1_baseline/bin/python/
+09_global_executable` launcher for this step** — a real divergence from
+every prior step's target layout, not an inconsistency to smooth over.
+
+Confirmed via `diff` against `08_the_repl_loop`: `agent.rb`, `context.rb`,
+`logger.rb`, `errors.rb`, `registry.rb`, `tool.rb`, `message.rb`,
+`prompt_builder.rb`, `run_dsl.rb`, `tasks/*.rb`, `backends/*.rb` are
+**byte-identical**. Three files each silently **revert** a real fix or
+feature that `08_the_repl_loop` had just added — see the "known
+regressions" note below, this step's central finding. `Gemfile` gains a
+`gemspec` line; `boukensha.gemspec` and `bin/boukensha` are new;
+`version.rb` bumps to `"0.9.0"`; a new `lib/boukensha_loader.rb` is added.
+
+## Reference files (source of truth)
+
+| File | Role |
+|------|------|
+| `week1_baseline/ruby/09_global_executable/README.md` | Design intent: install via `gem build`/`gem install`, `BOUKENSHA_PATH` resolution table, `~/.boukensharc` permanent-default example, `BOUKENSHA_DEBUG=1` — **contains a stale version number, see note below** |
+| `week1_baseline/ruby/09_global_executable/boukensha.gemspec` | Gem metadata: name, version (from `version.rb`), `files` (all of `lib/**/*.rb` plus `bin/boukensha`), `bindir`/`executables` |
+| `week1_baseline/ruby/09_global_executable/bin/boukensha` | The installed executable's shebang script: `$LOAD_PATH.unshift(lib)`, `require "boukensha_loader"`, `BoukenshaLoader.load_and_start_repl` |
+| `week1_baseline/ruby/09_global_executable/lib/boukensha_loader.rb` | `BoukenshaLoader`: the three-tier resolution logic (env var → rc file → bundled default), plus the `respond_to?(:repl)` guard that tells the user to run examples directly for pre-step-7 targets |
+| `week1_baseline/ruby/09_global_executable/lib/boukensha/version.rb` | `VERSION = "0.9.0"` |
+| `week1_baseline/ruby/09_global_executable/lib/boukensha/client.rb` | **Regression:** the `401`-specific friendly `ApiError` message added in `08_the_repl_loop` is gone; reverted to the generic attempt-count message for every non-2xx status, including 401 |
+| `week1_baseline/ruby/09_global_executable/lib/boukensha/config.rb` | **Regression:** the cwd-`.boukensha` resolution tier added in `08_the_repl_loop` is gone; `resolve_dir` is back to just `ENV["BOUKENSHA_DIR"] \|\| DEFAULT_DIR` |
+| `week1_baseline/ruby/09_global_executable/lib/boukensha/repl.rb` | **Regression + real observed consequence:** `banner` drops the API-key-set?/config-directory-exists checks entirely, just printing raw `@config_dir`/`@provider`/`@model` with no validation — see note below, this is the exact failure mode encountered live debugging this step in this repo |
+| `week1_baseline/ruby/09_global_executable/lib/boukensha.rb` | `self.repl`'s docstring comment is reworded only; no behavioural change here |
+| `week1_baseline/ruby/09_global_executable/Gemfile` | Gains a bare `gemspec` line (pulls in the gemspec's own `add_dependency` list — currently none beyond what `Gemfile` already had) |
+| `week1_baseline/ruby/09_global_executable/lib/boukensha/{registry,tool,message,prompt_builder,run_dsl,logger,errors,context,agent}.rb`, `tasks/*.rb`, `backends/*.rb` | Byte-identical to `08_the_repl_loop` — copy Python's existing (planned) ports forward unchanged |
+| `week1_baseline/python/08_the_repl_loop/` (planned tree, per [`08_the_repl_loop`](08_the_repl_loop)) | Python-side source for the parts of this step that don't change |
+
+**Known regressions — three separate findings, three separate
+recommendations.** All three are real, confirmed via `diff` against
+`08_the_repl_loop` (not present in any earlier step's plan, since they're
+introduced and un-introduced within adjacent steps):
+
+1. **The `401` friendly-`ApiError`-message special case is silently
+   removed.** No plausible pedagogical or packaging-related reason found —
+   same category as `04_api_client`'s `PROMPTS_DIR` off-by-one, which that
+   plan explicitly chose *not* to replicate. **Recommend the Python port
+   keep the friendlier 401 message** (i.e. treat `08_the_repl_loop`'s
+   addition as the one that should stick, and *not* revert it here), since
+   reverting it serves no purpose visible from the code or README and
+   would just be forwarding a probable accident.
+2. **The cwd-`.boukensha` config-resolution tier is silently removed.**
+   Unlike finding 1, this one has a plausible, defensible rationale tied
+   directly to this step's stated purpose: a *global* executable arguably
+   should resolve to the *same* config regardless of which directory the
+   user happens to be standing in when they type `boukensha`, rather than
+   picking up an ambient `.boukensha/` folder that happens to exist in the
+   current working directory (surprising action-at-a-distance for a tool
+   explicitly marketed as "works from anywhere"). **Recommend porting this
+   reversion faithfully** (drop back to env-var-or-`~/.boukensha` in this
+   step's `config.py`), but flagging it as a judgment call rather than an
+   obvious bug, unlike finding 1.
+3. **The REPL banner's API-key/config-directory validation is removed.**
+   This is the regression with a *directly observed* real-world
+   consequence: earlier in this same repo, debugging why `09_
+   global_executable` "doesn't work after following the steps" traced back
+   to exactly two things — a stray `~/.boukensharc` and a missing
+   `~/.boukensha/` directory — and the *reason the failure wasn't obvious
+   from the banner* is precisely this regression. `08_the_repl_loop`'s
+   banner would have printed `"✗ directory not found"` right at boot;
+   `09_global_executable`'s banner instead prints `(default)` with no
+   validation at all and only fails later, opaquely, inside
+   `Tasks::Base.model` (`ArgumentError: tasks.player.model is required in
+   settings.yaml`). **Recommend flagging this clearly as a real usability
+   regression** but porting Ruby's actual step-9 behavior faithfully for
+   fidelity to what this specific step *is* — the fix (restoring the
+   validation) belongs in a real Ruby-side patch, not something to
+   silently diverge on in the Python port without a matching Ruby fix to
+   point back to. Listed as an open question below rather than decided
+   here.
+
+**Known README inaccuracy — do not replicate.** The `## Install` section's
+example commands (`gem build boukensha.gemspec`, `gem install
+boukensha-0.1.0.gem`) reference version `0.1.0`; the real, current version
+(per `version.rb`) is `0.9.0`, and the actual built artifact in this
+directory's sibling steps is named `boukensha-0.9.0.gem`. Same
+copy-paste-drift category as prior plans' stale-path notes — document the
+real current version in the Python README's install instructions instead.
+
+## Target layout
+
+```
+week1_baseline/python/09_global_executable/
+  pyproject.toml               # [project.scripts] boukensha-py = "boukensha_loader:main"; version = "0.9.0"
+  uv.lock
+  .python-version              # "3.14"
+  README.md                    # ported from ruby/09_global_executable/README.md, WITH the 0.1.0→0.9.0 install-example fix
+  src/
+    boukensha_loader.py          # new: top-level module (NOT inside the boukensha/ package — mirrors lib/boukensha_loader.rb sitting beside, not inside, lib/boukensha/)
+    boukensha/
+      __init__.py                 # +VERSION import/re-export; repl()'s docstring reworded only
+      version.py                   # VERSION = "0.9.0"
+      client.py                    # 401 special-case KEPT (see regression finding 1 — not reverted)
+      config.py                    # cwd-.boukensha tier REMOVED this step (see regression finding 2 — reverted, faithfully)
+      repl.py                      # banner validation REMOVED this step (see regression finding 3 — reverted, faithfully, flagged)
+      registry.py, tool.py, message.py, prompt_builder.py, run_dsl.py,
+      logger.py, errors.py, context.py, agent.py, backends/*.py, tasks/*.py   # unchanged copies from 08_the_repl_loop
+  prompts/
+    system.md                   # unchanged copy — still shipped as the bundled-default step's own prompt
+  tests/
+    test_config.py                # extended: cwd-.boukensha tier no longer resolves (env var / ~/.boukensha only)
+    test_client.py                 # extended: 401 message assertion carried forward UNCHANGED from 08 (not reverted — see finding 1)
+    test_repl.py                    # extended: banner no longer validates config-dir existence / api-key blankness (asserts the simpler, unvalidated format)
+    test_boukensha_loader.py         # new
+    (all other test_*.py carried forward unchanged from 08_the_repl_loop)
+
+  # No examples/ directory, no bin/python/09_global_executable launcher —
+  # see the note above; this step's only "example" is a real install.
+```
+
+## File-by-file port mapping
+
+| Ruby | Python | Notes |
+|------|--------|-------|
+| `boukensha.gemspec` | `pyproject.toml`'s `[project]`/`[project.scripts]` tables | `name = "boukensha"` (the *package* keeps its name — only the installed *command* is renamed), `version = "0.9.0"` (mirrors `version.rb`), `[project.scripts] boukensha-py = "boukensha_loader:main"` — the packaging-level equivalent of `spec.bindir`/`spec.executables`, deliberately renamed to avoid clashing with the already-installed Ruby `boukensha` gem executable (see the Purpose section's command-name note) |
+| `bin/boukensha` | `src/boukensha_loader.py`'s `main()` function | The installed console-script's actual entry point — see design decision below for why this can't just be a static shebang script the way Ruby's is |
+| `lib/boukensha_loader.rb` | `src/boukensha_loader.py` | `resolve()` → returns a `pathlib.Path` to the target step's `src/boukensha/__init__.py` (or `None`/sentinel for "bundled default"); `load_and_start_repl()` → dynamically loads that path as the `boukensha` module (see design decision below), then calls its `.repl()` if present, else aborts with the same "does not support the interactive REPL" message |
+| `lib/boukensha/version.rb` | `src/boukensha/version.py` | `VERSION = "0.9.0"` |
+| `lib/boukensha/client.rb` | `src/boukensha/client.py` | **No change from `08_the_repl_loop`'s port** — keep the 401-specific message (regression finding 1, not replicated) |
+| `lib/boukensha/config.rb` | `src/boukensha/config.py` | Remove the cwd-`.boukensha` tier (regression finding 2, replicated) — back to env-var-or-`DEFAULT_DIR` |
+| `lib/boukensha/repl.rb` | `src/boukensha/repl.py` | Remove the API-key/config-dir validation from `banner` (regression finding 3, replicated, flagged) |
+| `lib/boukensha.rb` | `src/boukensha/__init__.py` | No functional change — cosmetic docstring only |
+| `lib/boukensha/{registry,tool,message,prompt_builder,run_dsl,logger,errors,context,agent}.rb`, `tasks/*.rb`, `backends/*.rb` | `src/boukensha/{...}.py` | Copied forward unchanged from `08_the_repl_loop` |
+
+## Behavioural rules carried over unchanged
+
+1. **Resolution order is env var → rc file → bundled default,** each tier
+   only consulted if the previous one is absent — *not* "first one that
+   resolves to an existing valid target wins with silent fallthrough on
+   failure." An explicit `BOUKENSHA_PATH` that doesn't contain a loadable
+   step **aborts with an error** naming the bad path; it does not silently
+   fall through to the rc file or the bundled default. Same for a
+   non-empty `~/.boukensharc` pointing nowhere valid. Only *absence* of a
+   tier (unset env var; missing or empty rc file) falls through to the
+   next tier.
+2. **`~/.boukensharc`'s content is `.strip()`ped and used as a plain path**
+   — not a `KEY=value` line, not shell syntax, just a bare (possibly
+   `~`-relative) path to a step folder on a single line. An empty file (or
+   a file containing only whitespace) is treated as "absent," falling
+   through to the bundled default — not as "points nowhere," which would
+   abort.
+3. **A resolved step must contain a loadable entry module before it's
+   accepted** — for `BOUKENSHA_PATH`/rc-file resolution, that means the
+   equivalent of `<dir>/lib/boukensha.rb` existing on disk (Python:
+   `<dir>/src/boukensha/__init__.py`, given every Python step in this port
+   follows the `src/boukensha/` layout established since `00_config`) —
+   checked with a plain existence check before attempting to load it, so
+   a bad path fails with a clear, specific message rather than an import
+   error.
+4. **`BOUKENSHA_DEBUG` (checked via `Boukensha.debug?`... actually via a
+   bare `ENV["BOUKENSHA_DEBUG"]` check, independent of the `Boukensha.
+   debug!`/`debug?` module state added in `06_the_logger`) prints
+   `"[boukensha] loading from: <dir>"` right before loading** — this is a
+   *separate*, simpler env-var check than the `Boukensha.debug?` flag used
+   for raw-response logging; do not conflate the two in the Python port
+   (`os.environ.get("BOUKENSHA_DEBUG")` truthy-string-check, independent of
+   `boukensha.is_debug()`).
+5. **A resolved step that doesn't support the REPL (no `.repl`
+   attribute/function) aborts with a specific, actionable message** naming
+   the step directory and suggesting `ruby <dir>/examples/*.rb` (Python:
+   the equivalent suggestion should say `python <dir>/examples/example.py`)
+   — checked via `respond_to?(:repl)` in Ruby, `hasattr(module, "repl")` in
+   Python, against whichever module object was actually loaded.
+
+## Design decisions to make explicitly
+
+- **Ruby's `require main` (an exact resolved file path) has no
+  precedence-order ambiguity; a naive Python `sys.path.insert(0, ...)` +
+  `import boukensha` does, because `boukensha` may already be resolvable
+  from the installed package's own site-packages location.** Recommend
+  using `importlib.util.spec_from_file_location("boukensha",
+  <resolved_dir>/"src"/"boukensha"/"__init__.py", submodule_search_
+  locations=[str(<resolved_dir>/"src"/"boukensha")])`, then
+  `importlib.util.module_from_spec(spec)`, register it in `sys.modules["
+  boukensha"]` **before** calling `spec.loader.exec_module(module)` (so
+  the package's own internal relative imports — `from . import config`,
+  `from .tasks import player`, etc. — resolve against this exact loaded
+  instance rather than any other), then use that returned module object
+  directly (`module.repl(...)`) rather than a subsequent `import
+  boukensha` statement. This is the direct, path-precise equivalent of
+  Ruby's `require <exact path>` — no `sys.path` mutation, no ambiguity
+  about which `boukensha` wins, and it mirrors Ruby's model where the
+  loader resolves an exact file and loads exactly that file. This is the
+  single most novel piece of this whole port and deserves careful review
+  independent of everything else in this plan.
+- **The bundled-default case still needs a concrete, discoverable path —
+  Ruby's `BUNDLED_LIB = File.expand_path("../boukensha.rb", __FILE__)`
+  works because `lib/boukensha_loader.rb` and `lib/boukensha.rb` are
+  siblings inside the same installed gem tree.** Python: since `src/
+  boukensha_loader.py` and `src/boukensha/` are likewise siblings inside
+  the same installed *distribution* (same wheel, same site-packages
+  entry), the equivalent is `Path(__file__).parent / "boukensha" /
+  "__init__.py"` — resolved relative to `boukensha_loader.py`'s own
+  installed location, not a hardcoded absolute path, so it keeps working
+  regardless of where `pip`/`uv` actually installs the package.
+- **`main()` (the console-script entry point) needs no `$LOAD_PATH`
+  manipulation at all, unlike Ruby's `bin/boukensha`.** Ruby's shebang
+  script does `$LOAD_PATH.unshift File.expand_path("../lib", __dir__)`
+  because a gem's executable script isn't automatically able to `require
+  "boukensha_loader"` otherwise. Python's `[project.scripts]` mechanism
+  (via `pip`/`uv`-generated console-script shims) already puts the
+  installed package on `sys.path` correctly before calling the named
+  entry function — so `src/boukensha_loader.py`'s `main()` can just be a
+  plain function with no path setup of its own. This is a case where
+  Python's packaging tooling makes something Ruby has to do by hand
+  unnecessary — call this out explicitly rather than mechanically porting
+  a `sys.path` tweak that has no purpose in the Python version.
+- **Distribution/installation instructions replace `gem build`/`gem
+  install`:** the Python README's install section should read `uv tool
+  install .` (or `pip install .` / `pipx install .`) run from inside
+  `week1_baseline/python/09_global_executable/`, after which `boukensha-py`
+  is on `$PATH`. Recommend `uv tool install` as the primary documented
+  path (consistent with this whole port already standardizing on `uv`
+  since `00_config`), with a `pip install .`/`pipx` footnote for readers
+  without `uv`.
+- **Command name is `boukensha-py`, confirmed, not `boukensha`.** See the
+  Purpose section's note — this is a decided choice for this port, not an
+  open question (the earlier open question asking about it is resolved
+  and removed below). The Ruby README's examples (`BOUKENSHA_PATH=...
+  boukensha`, `BOUKENSHA_DEBUG=1 boukensha`) should be mirrored in the
+  Python README with `boukensha-py` substituted throughout, not
+  `boukensha` — every invocation example in this plan's own text uses
+  `boukensha` generically per the note in Purpose, but actual README/CLI
+  output text must say `boukensha-py`.
+- **No `examples/` directory, no `bin/python/09_global_executable`
+  launcher — a deliberate layout divergence from every other step in this
+  port, not an inconsistency.** See the Purpose section's note above for
+  the evidence (`bin/ruby/` has no entry for this step either). Do not
+  add either "for consistency" — that would misrepresent what this step
+  actually is on the Ruby side.
+
+## Testing
+
+Ruby's `09_global_executable` has no automated tests (there's no test
+framework wired into this gemspec-only tree). Recommend:
+
+1. **Manual verification, not a unit test:** actually `uv tool install .`
+   the built package into a scratch environment, run `boukensha` from an
+   arbitrary directory with no env vars set, confirm the REPL boots
+   against the bundled default; then set `BOUKENSHA_PATH` to a different
+   ported step's directory and confirm it loads that step's code instead
+   (and that a step without `.repl` — i.e. any step before `08_the_repl_
+   loop`'s Python port exists — produces the specific abort message).
+2. Carry all `08_the_repl_loop` test files forward, with `test_config.py`
+   updated to reflect the removed cwd-`.boukensha` tier and `test_repl.py`
+   updated to reflect the simplified (unvalidated) banner format — both
+   are genuine behavioural changes in this step, not left over from a
+   stale prior-step test.
+3. **Explicitly do not revert `test_client.py`'s 401-message assertion**
+   — carry it forward exactly as `08_the_repl_loop` left it, per
+   regression finding 1's recommendation not to replicate that reversion.
+4. Add `tests/test_boukensha_loader.py`, exercising `resolve()`/`main()`
+   with real temp directories on disk (no actual global install needed —
+   this can all be tested against `importlib`-loaded fixture packages in a
+   tmp path) covering:
+   - no env var, no rc file → resolves to the bundled default path
+   - `BOUKENSHA_PATH` set to a valid step directory (containing a
+     minimal fixture `src/boukensha/__init__.py`) → resolves to that
+     directory's module, not the bundled default
+   - `BOUKENSHA_PATH` set to an invalid directory → aborts (raises
+     `SystemExit`, matching Ruby's `abort`) with a message naming the bad
+     path, does **not** fall through to the rc file or bundled default
+   - no env var, `~/.boukensharc` (monkeypatched `Path.home()`) containing
+     a valid step path → resolves to that step
+   - no env var, an empty/whitespace-only `~/.boukensharc` → falls through
+     to the bundled default (does not abort)
+   - no env var, `~/.boukensharc` pointing at an invalid path → aborts,
+     does not fall through
+   - a resolved module lacking a `repl` attribute → aborts with the
+     "does not support the interactive REPL" message, naming the actual
+     resolved directory
+   - `BOUKENSHA_DEBUG` set → the `"[boukensha] loading from: ..."` line is
+     printed; unset → it is not
+
+## Open questions
+
+1. Confirm the `importlib.util.spec_from_file_location` + manual
+   `sys.modules` registration approach for exact-path module loading, as
+   the correct, ambiguity-free translation of Ruby's `require <exact
+   path>` — this is the plan's central novel design decision and merits
+   explicit sign-off before implementation.
+2. Confirm **not** reverting the 401 friendly-error message (regression
+   finding 1) — keep `08_the_repl_loop`'s version in the Python port even
+   though Ruby's step 9 reverts it, since no rationale for the reversion
+   is visible.
+3. Confirm reverting the cwd-`.boukensha` config-resolution tier
+   (regression finding 2) faithfully, on the grounds that "a global
+   command should resolve config independent of cwd" is a plausible,
+   step-appropriate rationale — flagged as a judgment call, not an
+   obvious bug.
+4. Confirm reverting the REPL banner's validation (regression finding 3)
+   faithfully for parity with this exact Ruby step, despite it being the
+   direct cause of a real, previously-encountered debugging session in
+   this repo — and confirm this is being tracked as a real Ruby-side UX
+   issue worth fixing upstream (in Ruby) rather than silently diverging
+   only on the Python side.
+5. Confirm `uv tool install .` as the primary documented install path for
+   the Python README, with `pip install .`/`pipx install .` as
+   alternatives.
+
+Resolved (no longer open): the console-script command is named
+`boukensha-py` (not `boukensha`), to coexist with the Ruby gem's already-
+installed `boukensha` executable on this machine without relying on
+`$PATH` order.
+
+Confirm remaining

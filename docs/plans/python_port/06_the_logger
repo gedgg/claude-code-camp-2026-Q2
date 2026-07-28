@@ -1,0 +1,270 @@
+# Python Port Plan — Step 06 · The Logger
+
+## Purpose
+
+Port `week1_baseline/ruby/06_the_logger` to Python, producing
+`week1_baseline/python/06_the_logger` that is behaviourally equivalent:
+same `Boukensha::Logger` (structured JSONL session logging, one file per
+run under `.boukensha/sessions/`), same `Agent` instrumentation (every
+iteration/prompt/tool-call/tool-result/response/turn-end event logged),
+same module-level `Boukensha.quiet!/loud!/quiet?/debug!/debug?/config`
+state. No tool-calling behaviour changes in this step — it wraps the
+existing loop with an observability layer.
+
+This is the seventh entry in the `docs/plans/python_port/<step>` series
+(see [`context.md`](context.md) for the index). `05_agent_loop` is the
+direct predecessor (not yet ported at the time of this writing — see
+[`05_agent_loop`](05_agent_loop)); this step adds `Boukensha::Logger` and
+extends `Agent`/`Config`/`errors.rb`/`PromptBuilder` on top of it.
+
+Confirmed via `diff` against `05_agent_loop`: `registry.rb`, `tool.rb`,
+`message.rb`, `tasks/base.rb`, `tasks/player.rb`, `backends/*.rb`,
+`client.rb`, `Gemfile`/`.lock` are **byte-identical**. `context.rb` only
+changes cosmetically (ivar-alignment whitespace). Everything else listed
+below has a real diff.
+
+## Reference files (source of truth)
+
+| File | Role |
+|------|------|
+| `week1_baseline/ruby/06_the_logger/README.md` | Design intent, JSONL event shape, `Logger` API table, debug-mode docs |
+| `week1_baseline/ruby/06_the_logger/lib/boukensha/logger.rb` | `Logger`: one JSONL file per session, one method per event phase |
+| `week1_baseline/ruby/06_the_logger/lib/boukensha/agent.rb` | Gains `logger:` kwarg (default `Logger.new`); instruments every phase; tool-dispatch errors now caught and turned into an error-string `tool_result` instead of propagating |
+| `week1_baseline/ruby/06_the_logger/lib/boukensha/config.rb` | Drops `mud_host`/`mud_port`/`mud_username`/`mud_password` (dead code at this point — no MUD tools exist yet) — **short-lived removal, see note below** |
+| `week1_baseline/ruby/06_the_logger/lib/boukensha/errors.rb` | Drops `LoopError` (previously dead code per `05_agent_loop`'s plan; now actually deleted) — **also short-lived, see note below** |
+| `week1_baseline/ruby/06_the_logger/lib/boukensha/prompt_builder.rb` | Gains `attr_reader :backend` — needed so `Logger#execution_metadata` can read `backend.model`/`backend.class.name`/etc. |
+| `week1_baseline/ruby/06_the_logger/lib/boukensha/{registry,tool,message}.rb`, `backends/*.rb`, `client.rb`, `tasks/*.rb` | Byte-identical to `05_agent_loop` — copy Python's existing (planned) ports forward unchanged |
+| `week1_baseline/ruby/06_the_logger/lib/boukensha.rb` | Adds module-level `@quiet`/`@debug`/`@config` state (`Boukensha.config`, `.quiet!`, `.loud!`, `.quiet?`, `.debug!`, `.debug?`); adds `require_relative "boukensha/logger"` and a (redundant — see design note) explicit `backends/base` require |
+| `week1_baseline/ruby/06_the_logger/examples/example.rb` | Builds a `Logger.new`, passes it into `Agent.new`; otherwise same structure as `05_agent_loop`'s example |
+| `week1_baseline/bin/ruby/06_the_logger` | Repo-root launcher script |
+| `week1_baseline/python/05_agent_loop/` (planned tree, per [`05_agent_loop`](05_agent_loop)) | Python-side source for the parts of this step that don't change |
+
+**Known short-lived removals — port faithfully, flag for the next plan.**
+Two symbols disappear in this step and **reappear in `07_the_run_dsl`**
+(confirmed by diffing forward): `Config#mud_host`/`#mud_port`/
+`#mud_username`/`#mud_password` and `errors.rb`'s `LoopError`. Neither is
+used by anything in `05_agent_loop` or `06_the_logger` — Ruby is just
+dropping genuinely-dead code and then un-dropping it two steps later when
+`07_the_run_dsl`'s `Boukensha.run`/`Boukensha.repl` re-introduce a need for
+`mud_*` (config-driven MUD options, unused until `10_standard_tool_library`)
+and `08_the_repl_loop`'s `Repl` starts `rescue`-ing `LoopError` (still never
+`raise`d anywhere through `10_standard_tool_library` — see that step's
+plan). Recommend the Python port **remove both faithfully in this step**
+(delete `mud_host`/etc. accessors from `config.py`; remove `LoopError` from
+`errors.py`) rather than leaving them in "just in case," matching Ruby's
+actual state at this exact commit — then re-add both in the
+`07_the_run_dsl` port, exactly mirroring the Ruby history. This is flagged
+as a loose thread for whoever ports `07_the_run_dsl` next.
+
+## Target layout
+
+```
+week1_baseline/python/06_the_logger/
+  pyproject.toml               # same shape as 05_agent_loop's, updated description
+  uv.lock
+  .python-version              # "3.14"
+  README.md                    # ported from ruby/06_the_logger/README.md
+  src/boukensha/
+    __init__.py                 # +quiet()/loud()/is_quiet()/debug()/is_debug()/get_config(); exports Logger
+    config.py                   # tasks(), dig(), etc. unchanged; mud_* accessors REMOVED this step
+    errors.py                   # ConfigError, UnknownToolError, ApiError, UnsupportedModelError; LoopError REMOVED this step
+    tool.py, message.py, registry.py, tasks/*.py, backends/*.py, client.py   # unchanged copies
+    context.py                   # unchanged (cosmetic-only Ruby diff)
+    prompt_builder.py             # backend becomes a public attribute (self.backend), readable externally
+    logger.py                     # new: Logger
+    agent.py                      # +logger kwarg (default Logger()), full instrumentation, tool-dispatch error handling
+  prompts/
+    system.md                    # unchanged copy
+  examples/
+    example.py                   # mirrors example.rb: builds Logger(), passes to Agent
+  tests/
+    test_config.py                # extended: confirm mud_* accessors absent this step
+    test_tool.py, test_message.py, test_context.py, test_registry.py,
+    test_prompt_builder.py, test_client.py, test_backends/, test_tasks.py    # carried forward; test_prompt_builder.py extended for the new `backend` attribute
+    test_agent.py                 # extended: logger instrumentation calls, tool-error → tool_result(ok=False) path
+    test_logger.py                # new
+
+week1_baseline/bin/python/06_the_logger   # new launcher, mirrors bin/python/02_the_registry
+```
+
+## File-by-file port mapping
+
+| Ruby | Python | Notes |
+|------|--------|-------|
+| `lib/boukensha/logger.rb` | `src/boukensha/logger.py` | `Logger(session_id=None, dir=None, log=None, snapshot=None)`: one method per phase (see behavioural rules) |
+| `lib/boukensha/agent.rb` | `src/boukensha/agent.py` | `Agent.__init__` gains `logger=None` (defaults to a fresh `Logger()` if not given, matching Ruby's `logger: Logger.new` default-value-in-signature — see design decision on Python default-arg pitfalls below); every phase now calls the matching `self._logger.*` method |
+| `lib/boukensha/config.rb` | `src/boukensha/config.py` | Remove `mud_host`/`mud_port`/`mud_username`/`mud_password` (temporarily — see note above) |
+| `lib/boukensha/errors.rb` | `src/boukensha/errors.py` | Remove `LoopError` (temporarily — see note above) |
+| `lib/boukensha/prompt_builder.rb` | `src/boukensha/prompt_builder.py` | Expose `self.backend` as a plain public attribute (no `@property` needed — Python has no Ruby-style private-by-default ivars, so this is just "don't underscore-prefix it") |
+| `lib/boukensha/{registry,tool,message}.rb`, `backends/*.rb`, `client.rb`, `tasks/*.rb` | `src/boukensha/{...}.py` | Copied forward unchanged from `05_agent_loop` |
+| `lib/boukensha.rb` | `src/boukensha/__init__.py` | Add module-level quiet/debug/config state (see design decision below) and `Logger` export |
+| `examples/example.rb` | `examples/example.py` | Build `Logger()`, pass `logger=logger` into `Agent(...)`; otherwise unchanged from `05_agent_loop`'s example |
+| `week1_baseline/bin/ruby/06_the_logger` | `week1_baseline/bin/python/06_the_logger` | Launcher, same pattern as prior pairs |
+
+## Behavioural rules carried over unchanged
+
+1. **One JSONL file per `Logger` instance,** written to
+   `<config.dir>/sessions/<session-id>.jsonl` by default (auto-generated
+   session id: `YYYYMMDDTHHMMSSZ-<8 hex chars>`), or to an explicit
+   `dir:`/`log:` override. The directory is created if missing. Every write
+   is `flush`ed immediately (no buffering — a crash mid-run shouldn't lose
+   log lines).
+2. **Every log line is a flat JSON object** with `session_id`, `at` (ISO
+   8601 timestamp), `phase`, plus phase-specific fields — never nested
+   under a wrapper key. Phases: `session_start`, `iteration`,
+   `limit_reached`, `turn_end`, `prompt`, `tool_call`, `tool_result`,
+   `response`, `raw`.
+3. **`raw` events are gated on `Boukensha.debug?`,** not on any
+   per-`Logger`-instance flag — checked globally at call time inside
+   `Logger#raw`, so toggling `Boukensha.debug!` mid-run changes behaviour
+   for every already-constructed `Logger`/`Agent`.
+4. **Tool-dispatch errors are now caught, not propagated.** This is the one
+   genuine behavioural change to the agent loop itself in this step:
+   `handle_tool_calls` wraps `@registry.dispatch(name, args)` in a
+   `rescue StandardError => e`, turning any exception into the string
+   `"ERROR: #{e.class}: #{e.message}"`, which becomes the `tool_result`
+   content sent back to the model (so the agent can see the failure and
+   retry/adapt) — logged via `tool_result(ok: false, error: e.message)`
+   instead of crashing the whole `Agent#run` call. Before this step, an
+   exception inside a tool's block would propagate all the way up and kill
+   the loop.
+5. **`Logger#response`'s `execution_metadata`** derives `provider` from
+   `backend.class.name.split("::").last` converted from CamelCase to
+   snake_case (e.g. `OllamaCloud` → `"ollama_cloud"`), reads `model` off
+   `backend.model`, and computes `usage_unit`/`usage_level` only if the
+   backend `respond_to?` them (only Ollama Cloud defines `usage_level`).
+   `cost_usd` comes from `backend.estimate_cost(input_tokens:,
+   output_tokens:)` when both token counts are present, else `nil`. The
+   whole metadata hash is `.compact`-ed (Ruby: drops `nil` values) before
+   merging into the log line.
+6. **`Logger#normalized_usage`** reads whichever of `response["usage"]`
+   (Anthropic/OpenAI), `response["usageMetadata"]` (Gemini), or Ollama's
+   flat `prompt_eval_count`/`eval_count` top-level keys are present, in
+   that priority order, returning `None`/`nil` if none exist. This is
+   distinct from (and simpler than) `Logger#usage_tokens`'s per-key lookup
+   used by `execution_metadata` — the two do overlap in purpose but are
+   separate methods with separate call sites (`normalized_usage` feeds
+   `log_response`'s `usage:` kwarg; `usage_tokens` is used internally by
+   `execution_metadata`) — port both as separate methods, not unified.
+7. **`Logger#subscribe`(this step doesn't have it yet — see next
+   plan's note)** — not present in `06_the_logger`; do not port it here
+   (it's a `07_the_run_dsl` addition, listed in that step's plan).
+8. **The `Agent`'s reasoning-text-before-tool-calls log line** falls back
+   to a synthesized placeholder (`"(tool use — N call(s))"`) when the
+   model's response has no plain-text content alongside the tool-call
+   blocks — `handle_tool_calls` computes this before logging the response,
+   independent of whether any actual reasoning text exists.
+
+## Design decisions to make explicitly
+
+- **Ruby's `logger: Logger.new` default-argument-value is evaluated once
+  per call** (a fresh `Logger` is constructed for every `Agent.new` that
+  doesn't pass one explicitly — Ruby re-evaluates keyword-argument default
+  expressions at each call site, unlike Python's notorious "mutable
+  default evaluated once at def-time" trap). Recommend `logger: Logger |
+  None = None` in Python's `Agent.__init__` signature, with `self._logger =
+  logger if logger is not None else Logger()` in the body — the classic,
+  correct Python idiom for "a fresh instance per call," not `logger:
+  Logger = Logger()` in the signature itself (which would share **one**
+  `Logger` instance, and one open file handle, across every `Agent` that
+  doesn't pass its own).
+- **Module-level mutable state (`@quiet`, `@debug`, `@config`) needs a home
+  that avoids a circular import between `__init__.py` and `logger.py`.**
+  Ruby's `module Boukensha; @quiet = false; ...; end` at the top of
+  `boukensha.rb` works because Ruby modules are just objects — `logger.rb`
+  (required afterward) can freely call `Boukensha.debug?`/`Boukensha.config`
+  at runtime. Python's `src/boukensha/__init__.py` is the natural place for
+  the equivalent module-level `_quiet`, `_debug`, `_config` globals plus
+  `quiet()`/`loud()`/`is_quiet()`/`debug()`/`is_debug()`/`get_config()`
+  functions — but `__init__.py` also needs `from .logger import Logger` for
+  re-export, and `logger.py` needs to call `is_debug()`/`get_config()`.
+  Recommend `logger.py` do `import boukensha as _boukensha` **inside the
+  method bodies** that need it (`raw`, `default_dir`), not at module
+  top-level, which defers the lookup until after `boukensha/__init__.py`
+  has finished executing and sidesteps the circular-import-at-import-time
+  problem entirely. (Alternative considered and rejected: a separate
+  `state.py` module — rejected because it has no Ruby equivalent to mirror
+  and would be an invented abstraction not present in the source.)
+- **CamelCase→snake_case for `provider_name`** — Ruby's
+  `.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase` becomes Python
+  `re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower()`, applied to
+  `type(backend).__name__` (Python's equivalent of Ruby's
+  `backend.class.name.split("::").last`, which is already just the
+  short class name — no `Boukensha::Backends::` prefix to strip in
+  Python since there's no module-qualified class-name string).
+- **`respond_to?(:usage_level)` → Python's `hasattr(backend,
+  "usage_level")`,** same pattern already used for `Agent`'s
+  `max_iterations` guard in `05_agent_loop`'s plan.
+- **JSON line writes use `json.dumps(event, default=str)`, not bare
+  `json.dumps`,** as a safety net — Ruby's `JSON.generate` on an
+  arbitrary `Message`/tool-result value mostly works because those are
+  already strings/hashes by the time they reach the logger, but recommend
+  `default=str` defensively in Python in case a caller ever logs a
+  non-JSON-serializable object (e.g. an exception instance) — a small,
+  justified robustness addition, not a Ruby behavioural equivalent (Ruby's
+  `JSON.generate` would raise `TypeError` on truly unserializable input
+  too; this is a "nice to have" difference worth confirming rather than
+  silently deciding).
+- **Session-id generation uses `datetime.now(timezone.utc).strftime(...)`
+  plus `secrets.token_hex(4)`,** the direct Python stdlib equivalents of
+  Ruby's `Time.now.utc.strftime(...)` and `SecureRandom.hex(4)`.
+
+## Testing
+
+Ruby's `06_the_logger` has no automated tests, only `examples/example.rb`
+(a real, network-driven run). Recommend:
+
+1. Port `examples/example.py` 1:1 for manual smoke-testing against a real
+   `.boukensha/` dir and a real API key — confirm a `.jsonl` file appears
+   under `.boukensha/sessions/`.
+2. Carry `05_agent_loop`'s test files forward; extend `test_config.py` to
+   assert `mud_host`/etc. are genuinely absent this step (`hasattr(config,
+   "mud_host")` is `False`), and extend `test_prompt_builder.py` to assert
+   `builder.backend is the_backend_instance` (the new public attribute).
+3. Add `tests/test_logger.py` covering, with a temp directory as `dir=`:
+   - `session_start` is written immediately on construction, merging
+     `snapshot=` into the event
+   - each phase method (`iteration`, `limit_reached`, `turn_end`, `prompt`,
+     `tool_call`, `tool_result`, `response`) writes exactly one correctly-
+     shaped JSON line, in append mode (multiple calls → multiple lines)
+   - `raw` writes nothing when `is_debug()` is `False`, writes when `True`
+     (toggle via `boukensha.debug()` in the test, reset after)
+   - `response`'s cost/usage computation: a fake backend with
+     `estimate_cost`/`model`/`usage_unit` produces the expected
+     `execution_metadata`; a backend without `estimate_cost` (or missing
+     token counts) produces `cost_usd: None`, dropped by `.compact`-style
+     filtering (i.e. the key is absent from the written JSON, not present
+     with a `null` value) — confirm which of these two Ruby's `.compact`
+     actually produces and match it exactly
+   - `close()` closes the file handle (no further writes possible /
+     no exception on double-close)
+4. Extend `tests/test_agent.py` (carried from `05_agent_loop`) with:
+   - a fake `logger` double asserting the right sequence of calls
+     (`iteration` → `prompt` → `raw` → then either `tool_call`+
+     `tool_result` pairs or `response`+`turn_end`) across a two-iteration
+     run
+   - a tool that raises inside its block → `tool_result` message content
+     is `"ERROR: <ExceptionType>: <message>"`, `logger.tool_result` called
+     with `ok=False, error=<message>`, and the loop **continues** (does not
+     propagate the exception)
+
+## Open questions
+
+1. Confirm removing `mud_host`/`mud_port`/`mud_username`/`mud_password`
+   from `config.py` and `LoopError` from `errors.py` in this step (matching
+   Ruby's temporary deletion), to be re-added in the `07_the_run_dsl` port —
+   rather than leaving them in "for convenience" and silently diverging from
+   the Ruby history at this commit.
+2. Confirm the `import boukensha as _boukensha` deferred-import approach
+   inside `logger.py`'s method bodies as the fix for the
+   `__init__.py`/`logger.py` circular-import problem, over alternatives
+   (a separate state module, or restructuring `__init__.py` to import
+   `Logger` lazily).
+3. Confirm `logger: Logger | None = None` (constructed fresh per call in
+   the method body) as the correct translation of Ruby's per-call-evaluated
+   default-argument value — this is a real Python footgun avoidance, not a
+   style preference.
+4. Confirm `json.dumps(event, default=str)` as a reasonable defensive
+   addition with no Ruby equivalent to match against.
+
+Confirm all

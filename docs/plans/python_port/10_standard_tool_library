@@ -1,0 +1,390 @@
+# Python Port Plan — Step 10 · A Standard Tool Library
+
+## Purpose
+
+Port `week1_baseline/ruby/10_standard_tool_library` to Python, producing
+`week1_baseline/python/10_standard_tool_library` that is behaviourally
+equivalent: `Boukensha.run`/`Boukensha.repl` gain a standard library of
+tools registered automatically instead of by hand — `Tools::FileSystem`
+(sandboxed file I/O: `pwd`, `list_directory`, `read_file`, `write_file`,
+`delete_file`, `search_files`), `Tools::Shell` (`run_command`, with a
+timeout and an optional executable allow-list), and `Tools::Mud` (a full
+CircleMUD gameplay tool set built on the separate `mud_manager` gem).
+
+This is the eleventh and final entry in the `docs/plans/python_port/<step>`
+series for `week1_baseline` (see [`context.md`](context.md) for the
+index). `09_global_executable` is the direct predecessor (not yet ported
+at the time of this writing — see [`09_global_executable`](
+09_global_executable)); this step restores the two Ruby-side regressions
+that step introduced (see below — genuinely good news this time) and adds
+three new tool modules plus their `Context`/`Boukensha.run`/`repl` wiring.
+
+**This step has one prerequisite outside the numbered `week1_baseline`
+series that the other ten plans in this index do not: `mud_manager` itself
+needs its own Python port before `Tools::Mud` can be implemented for
+real.** See the dedicated section below — this is flagged prominently
+because it changes the shape of "done" for this step alone.
+
+Confirmed via `diff` against `09_global_executable`: `agent.rb`,
+`prompt_builder.rb`, `run_dsl.rb`, `logger.rb`, `errors.rb`, `registry.rb`,
+`tool.rb`, `message.rb`, `client.rb`, `config.rb`, `tasks/*.rb`,
+`backends/*.rb` are **byte-identical**. `context.rb`, `repl.rb`,
+`version.rb`, `boukensha.rb`, `boukensha_loader.rb`, and `boukensha.gemspec`
+each gain real, meaningful changes. Three new tool files and a new
+`examples/example.rb` are added (this step regains an `examples/`
+directory, absent since `08_the_repl_loop` — see `09_global_executable`'s
+plan for why it had none).
+
+## The `mud_manager` dependency (read this before estimating scope)
+
+`Boukensha::Tools::Mud` (`lib/boukensha/tools/mud.rb`) is a thin
+tool-registration layer over a **separate gem**,
+`week0_explore/mud_manager` (`MudManager::Session` — a long-lived telnet
+connection with background buffering and IAC stripping, ~268 lines;
+`MudManager::Primitives` — a stateless library of ~50 typed CircleMUD
+command builders, ~418 lines). `boukensha.gemspec` declares `spec.
+add_dependency "mud_manager", "~> 0.1"` in this step — a real, resolvable
+dependency (unlike `09_global_executable`'s more provisional-looking bare
+`gemspec` line in its `Gemfile`), confirmed by the fact that this repo's
+own `.boukensha` setup actually runs a live MUD session against it
+(verified independently while debugging `bin/ruby/10_standard_tool_
+library` earlier in this repo's history).
+
+`mud_manager` has **no Python port and no plan for one anywhere in this
+`docs/plans/python_port/` series** — `00_config`'s plan originally flagged
+it as "not yet folded into a numbered `week1_baseline` step... gets its
+own plan once it lands there"; it has now landed, in this exact step.
+**Recommend treating the Python port of `mud_manager` as its own,
+separate, standalone package** (mirroring Ruby's structure exactly: a
+sibling package outside the `week1_baseline/python/<NN>_*` numbered
+series, e.g. `week0_explore/mud_manager_py/` or similar, exposing a
+`Session` class and a `primitives` module with the same ~50 command
+builders) **written and planned independently before or alongside this
+step's `Tools::Mud`**, rather than embedding a from-scratch telnet client
+inside this plan. This plan covers `Tools::Mud`'s registration/wiring
+layer assuming a Python `mud_manager` package already exists with an
+equivalent public surface; it does **not** design that package's port.
+
+## Reference files (source of truth)
+
+| File | Role |
+|------|------|
+| `week1_baseline/ruby/10_standard_tool_library/README.md` | Design intent, tool tables for `FileSystem`/`Shell`, new `Boukensha.run`/`.repl` keyword args — **contains one false claim, see note below** |
+| `week1_baseline/ruby/10_standard_tool_library/lib/boukensha/tools/file_system.rb` | `Tools::FileSystem.register(registry, working_dir:)`: six sandboxed file tools, all paths resolved+guarded against the root |
+| `week1_baseline/ruby/10_standard_tool_library/lib/boukensha/tools/shell.rb` | `Tools::Shell.register(registry, working_dir:, timeout: 30, allowed_commands: nil)`: one tool, `run_command` |
+| `week1_baseline/ruby/10_standard_tool_library/lib/boukensha/tools/mud.rb` | `Tools::Mud.register(registry, host:, port:, name:, password:)`: ~24 MUD gameplay tools sharing one `MudManager::Session` via closure; auto-connects at registration time |
+| `week1_baseline/ruby/10_standard_tool_library/lib/boukensha/context.rb` | Gains `working_dir:` (expanded to an absolute path if given, else `nil`), exposed via `attr_reader` |
+| `week1_baseline/ruby/10_standard_tool_library/lib/boukensha/repl.rb` | **Restores** the API-key/config-dir banner validation that `09_global_executable` had dropped (genuinely good news — see note below); gains a `mud:` constructor kwarg and a TCP-reachability-only `mud_status_string`/`probe_mud` banner line |
+| `week1_baseline/ruby/10_standard_tool_library/lib/boukensha/version.rb` | `VERSION = "0.10.0"` |
+| `week1_baseline/ruby/10_standard_tool_library/lib/boukensha.rb` | `self.run`/`self.repl` gain `working_dir:` (default `Dir.pwd`), `allowed_commands:`, `shell_timeout:`, `mud:` kwargs; both auto-register `FileSystem`+`Shell` when `working_dir` is truthy, and `Mud` when a resolved mud-options hash is available; adds private `self.mud_opts_from_config` |
+| `week1_baseline/ruby/10_standard_tool_library/lib/boukensha_loader.rb` | Gains legacy `MUD_NAME`/`MUD_HOST`/`MUD_PORT`/`MUD_PASSWORD` env-var handling — still-supported override that takes precedence over `settings.yaml`'s `mud:` block when `MUD_NAME` is set; passes `working_dir: false` in that branch |
+| `week1_baseline/ruby/10_standard_tool_library/boukensha.gemspec` | Adds `spec.add_dependency "mud_manager", "~> 0.1"` |
+| `week1_baseline/ruby/10_standard_tool_library/examples/example.rb` | New (this step regains an `examples/` dir): a live MUD demo — connects, looks around, checks score/exits, `working_dir: false` (no file tools needed for MUD play) |
+| `week1_baseline/ruby/10_standard_tool_library/lib/boukensha/{agent,prompt_builder,run_dsl,logger,errors,registry,tool,message,client,config}.rb`, `tasks/*.rb`, `backends/*.rb` | Byte-identical to `09_global_executable` — copy Python's existing (planned) ports forward unchanged |
+| `week1_baseline/bin/ruby/10_standard_tool_library` | Repo-root launcher script (sets `BOUKENSHA_DIR`, `cd`s into this step, `bundle exec ruby examples/example.rb`) — this is the script fixed earlier in this repo's own history (missing `mud_manager` gem install + stale cross-machine `Gemfile.lock`) |
+| `week1_baseline/python/09_global_executable/` (planned tree, per [`09_global_executable`](09_global_executable)) | Python-side source for the parts of this step that don't change |
+
+**Genuinely good news, not a new finding to weigh — confirm and move on.**
+`09_global_executable`'s plan flagged the REPL banner's dropped validation
+as a real regression with an observed real-world consequence. This step
+**restores it exactly** (the full `key_status`/`config_exists` banner
+logic from `08_the_repl_loop` is back, verbatim) and adds the MUD status
+line alongside it. **Recommend the Python port of `09_global_executable`'s
+`repl.py` restore this validation here, in this step, matching Ruby's own
+timeline** — i.e. `09_global_executable`'s Python `repl.py` should be the
+*simplified* (regression-reproducing) version, and *this* step's `repl.py`
+is where the fuller validation logic reappears, exactly mirroring which
+Ruby file has which banner at which commit.
+
+**Known README inaccuracy — do not replicate.** The README's `Boukensha::
+Tools::FileSystem` section opens with "The evolution of step 9's
+`WorkingDirectory` — same five tools plus one new one." **No such
+`WorkingDirectory` tool module exists anywhere in `09_global_executable`**
+(confirmed: that step has no `tools/` directory, no file-system tools at
+all — its `README.md`/`diff` both confirm zero tool-related content).
+`FileSystem` is entirely new in *this* step, not an evolution of anything.
+This looks like boilerplate carried over from an earlier internal draft
+with different step numbering. Same category as every prior plan's
+stale-reference notes (`02_the_registry`'s stale path,
+`04_api_client`'s stale backends-table claim, `08_the_repl_loop`'s stale
+`step7.rb`) — document `FileSystem` as wholly new in the Python README,
+not as an evolution of a step-9 tool that never existed.
+
+## Target layout
+
+```
+week1_baseline/python/10_standard_tool_library/
+  pyproject.toml               # version = "0.10.0"; add a dependency on the (separately ported) mud_manager Python package
+  uv.lock
+  .python-version              # "3.14"
+  README.md                    # ported from ruby/10_standard_tool_library/README.md, WITH the false "step 9's WorkingDirectory" claim removed
+  src/
+    boukensha_loader.py          # +MUD_NAME/MUD_HOST/MUD_PORT/MUD_PASSWORD legacy env-var handling
+    boukensha/
+      __init__.py                 # run()/repl() gain working_dir/allowed_commands/shell_timeout/mud kwargs, auto-registration, _mud_opts_from_config()
+      version.py                   # VERSION = "0.10.0"
+      context.py                   # +working_dir (Path | None, expanded if given)
+      repl.py                      # banner validation RESTORED (see note above) + mud status line
+      tools/
+        __init__.py
+        file_system.py              # new: FileSystem.register(...)
+        shell.py                     # new: Shell.register(...)
+        mud.py                       # new: Mud.register(...) — depends on the separately-ported mud_manager package
+      agent.py, prompt_builder.py, run_dsl.py, logger.py, errors.py,
+      registry.py, tool.py, message.py, client.py, config.py, tasks/*.py, backends/*.py   # unchanged copies from 09_global_executable
+  prompts/
+    system.md                    # unchanged copy
+  examples/
+    example.py                   # new: mirrors example.rb — live MUD demo, working_dir=False
+  tests/
+    test_context.py                # extended: working_dir field
+    test_repl.py                    # extended: banner validation restored + mud status line (mock the TCP probe — no real socket in unit tests)
+    test_run.py                     # extended: working_dir/allowed_commands/shell_timeout/mud kwargs, auto-registration behavior, mud: False / working_dir: False opt-outs
+    test_boukensha_loader.py         # extended: MUD_NAME/etc precedence over config
+    test_tools/
+      test_file_system.py            # new
+      test_shell.py                   # new
+      test_mud.py                     # new — against a fake/mocked mud_manager.Session, no live socket
+    (all other test_*.py carried forward unchanged from 09_global_executable)
+
+week1_baseline/bin/python/10_standard_tool_library   # new launcher, mirrors bin/python/02_the_registry
+```
+
+## File-by-file port mapping
+
+| Ruby | Python | Notes |
+|------|--------|-------|
+| `lib/boukensha/tools/file_system.rb` | `src/boukensha/tools/file_system.py` | `register(registry, working_dir)`: closures become a nested function or a small private helper class holding `root`; six tools (see behavioural rules) |
+| `lib/boukensha/tools/shell.rb` | `src/boukensha/tools/shell.py` | `register(registry, working_dir, timeout=30, allowed_commands=None)`: one tool, `run_command` |
+| `lib/boukensha/tools/mud.rb` | `src/boukensha/tools/mud.py` | `register(registry, host="localhost", port=4000, *, name, password)` — depends on the separately-ported `mud_manager` package's `Session`/`primitives` |
+| `lib/boukensha/context.rb` | `src/boukensha/context.py` | Add `working_dir: Path \| None = None` (expanded via `Path(working_dir).expanduser().resolve()` if given) |
+| `lib/boukensha/repl.rb` | `src/boukensha/repl.py` | Restore full banner validation; add `mud=None` constructor kwarg; add `_mud_status_string()`/`_probe_mud()` |
+| `lib/boukensha/version.rb` | `src/boukensha/version.py` | `VERSION = "0.10.0"` |
+| `lib/boukensha.rb` | `src/boukensha/__init__.py` | `run()`/`repl()` gain `working_dir=os.getcwd()`, `allowed_commands=None`, `shell_timeout=30`, `mud=None`; auto-register `FileSystem`+`Shell` when `working_dir` is truthy; resolve+auto-register `Mud` via `_mud_opts_from_config()` when `mud` isn't explicitly `False` |
+| `lib/boukensha_loader.rb` | `src/boukensha_loader.py` | Add the `MUD_NAME` env-var branch: when set, build a `mud=` dict from `MUD_HOST`/`MUD_PORT`/`MUD_NAME`/`MUD_PASSWORD` (abort if `MUD_PASSWORD` missing while `MUD_NAME` is set) and pass `working_dir=False` alongside it; otherwise call `repl()` with no explicit `mud`/`working_dir` override, letting config-driven defaults apply |
+| `boukensha.gemspec` | `pyproject.toml` | Add a dependency on the separately-ported Python `mud_manager` package |
+| `examples/example.rb` | `examples/example.py` | Live MUD demo: `boukensha.run(task="...", working_dir=False)` |
+| `week1_baseline/bin/ruby/10_standard_tool_library` | `week1_baseline/bin/python/10_standard_tool_library` | Launcher, same pattern as prior pairs (`uv run examples/example.py` from this step's directory, with `BOUKENSHA_DIR` set the same way the Ruby launcher sets it) |
+
+## Behavioural rules carried over unchanged
+
+1. **Every `FileSystem`/`Shell` path argument is resolved relative to the
+   sandboxed root and checked for escape** — `resolve(path)` expands the
+   agent-supplied path against `root`, then requires the result to equal
+   `root` or start with `f"{root}/"`; anything else returns the **string**
+   `"error: path '...' escapes the working directory"` rather than raising
+   — the agent sees the error as a normal tool result and can retry, same
+   error-as-string convention already established for tool-call failures
+   in `06_the_logger`'s plan. This is not Python exception-based error
+   handling by design; port the string-return convention exactly, not a
+   raised `ValueError`.
+2. **Every `FileSystem` tool's real file-I/O exceptions are caught and
+   turned into the same `"error: ..."` string convention** (`rescue => e;
+   oops.call(e.message)`), not left to propagate up to `Agent`'s
+   already-existing tool-dispatch error handling (`06_the_logger`) — this
+   is a second, tool-internal layer of error-to-string conversion, in
+   addition to (not instead of) the Agent-level `rescue StandardError`
+   safety net.
+3. **`search_files`'s regex compilation failure is reported as a tool
+   result, not a crash** — an invalid pattern string returns `"error:
+   invalid pattern: ..."` rather than propagating Ruby's `RegexpError`
+   (Python: catch `re.error` from `re.compile(pattern)` the same way).
+4. **`Shell#run_command`'s allow-list check is a first-token-only string
+   match**, not a shell-aware parse — `command.to_s.strip.split(/\s+/).
+   first` against `allowed_commands` (stringified) — a deliberately naive
+   guard, not a security boundary meant to withstand adversarial input
+   (e.g. it does nothing to stop `"git ; rm -rf /"` if `git` is allowed).
+   Port the same naive check faithfully; do not "improve" it into a real
+   shell-parsing guard, since that would be inventing security posture the
+   Ruby source doesn't claim to have.
+5. **`run_command` always returns combined stdout+stderr**, trimmed, with
+   an `"\n[exit N]"` suffix appended only on non-zero exit — a genuinely
+   empty (but successful) output becomes the literal string
+   `"(no output)"`. Command-not-found and timeout are both reported as
+   `"error: ..."` strings, not raised exceptions (matching the same
+   convention as `FileSystem`).
+6. **`Tools::Mud.register` auto-connects at registration time**, not on
+   first tool call — a failed auto-connect is caught and only `warn`'d to
+   stderr (does not raise, does not prevent registration from completing);
+   every gameplay tool's `guard` lambda then checks `session.open?`,
+   returning `"error: not connected — call mud_connect first"` if the
+   auto-connect failed or a later disconnect occurred, rather than raising.
+7. **`Tools::Mud`'s tool blocks catch `ArgumentError` from `Primitives`
+   command builders** (raised for invalid enum-like arguments — direction,
+   position, mode, etc. — per `mud_manager`'s own `check_enum!`/
+   `require_str!` validation) and convert to an `"error: ..."` string, same
+   convention as everywhere else in this step. Not every tool has this
+   guard (`flee`, `practice`, `save_character`, `send_raw` don't wrap in
+   `begin/rescue ArgumentError`, since their underlying `Primitives`
+   methods take no validated enum arguments) — port the presence/absence
+   of this rescue per-tool exactly as Ruby has it, not uniformly added to
+   every tool.
+8. **`Boukensha.run`/`.repl`'s tool auto-registration is keyed on
+   truthiness of `working_dir` and on `mud != false`,** not on `mud`
+   being non-`None` alone: `mud: nil` (the default) means "check config
+   for `mud_host`+`mud_username`, register if both present"; `mud: false`
+   explicitly means "never register MUD tools regardless of config";
+   an explicit `mud: {...}` hash always registers, bypassing config
+   entirely. `working_dir: false` means "skip `FileSystem`+`Shell`
+   entirely"; any other truthy value (including the default `Dir.pwd`)
+   registers both.
+9. **`mud_opts_from_config` requires *both* `cfg.mud_host` and `cfg.
+   mud_username`** to be present before returning a non-`nil` options
+   hash — `mud_host` alone (which always has a default of `"localhost"`
+   per `Config#mud_host`'s `|| "localhost"`) is not sufficient; recall
+   `Config#mud_host` **never actually returns `nil`** (it falls back to
+   `"localhost"` unconditionally), so in practice this guard only ever
+   turns on whether `cfg.mud_username` (no default, `nil` if unset) is
+   present — port the two-part `&&` check faithfully even though one side
+   is effectively always-truthy, rather than simplifying it to a
+   single `mud_username`-only check that would be functionally identical
+   but not textually faithful to the Ruby source.
+
+## Design decisions to make explicitly
+
+- **Ruby's per-registration closures (`resolve = lambda do |path| ... end`,
+  shared across all six `FileSystem` tools) become a small private
+  helper — either a nested closure inside `register()` (direct
+  translation) or a tiny non-exported class instantiated once per
+  `register()` call.** Recommend the direct nested-function translation
+  (`def _resolve(path): ...` defined inside `register()`, capturing
+  `root` via closure) over introducing a class, since Ruby doesn't
+  introduce one either and a class would be an unrequested structural
+  addition — same "don't invent an abstraction Ruby doesn't have" principle
+  applied throughout this port.
+- **`Tools::Mud`'s single shared `MudManager::Session` instance, captured
+  by every tool's closure** — the direct Python translation is the same
+  nested-function-with-closure pattern as `FileSystem`/`Shell`, capturing
+  a single `session = mud_manager.Session(host=host, port=port)` created
+  once inside `register()`. No need for a class here either, matching
+  Ruby's own choice not to wrap this in an object.
+- **The `mud_manager` Python package's expected public surface** (to be
+  designed in its own separate plan, referenced but not designed here):
+  a `Session` class with `open()`/`open?`→`is_open`/`close()`/
+  `send_command(cmd)`/`drain()`/`read_until_prompt(timeout=None)`/
+  `read_until_quiet(quiet_seconds=1.0, timeout=None)`/`login(username,
+  password)`, and a `primitives` module (or class of `@staticmethod`s,
+  mirroring Ruby's module-level functions taking no `self`) with the ~50
+  command-builder functions `Tools::Mud` calls through `p.<name>(...)`.
+  Recommend the Python port of `mud_manager` mirror this shape closely
+  (module-level functions, not a class needing instantiation, matching
+  Ruby's `MudManager::Primitives` being called as `p = MudManager::
+  Primitives; p.look(...)` — a module used as a plain namespace) — flagged
+  here only so `Tools::Mud`'s own port has a concrete target shape to code
+  against once `mud_manager`'s real plan exists; the actual design
+  decisions for `Session`'s telnet/threading/buffering internals belong in
+  that separate document, not this one.
+- **`working_dir: Dir.pwd` as a Ruby default-argument-value is evaluated
+  once per call** (matches every other per-call keyword default in this
+  port, e.g. `06_the_logger`'s `Logger.new` note) — Python:
+  `working_dir: str | Path | None | Literal[False] = None` in the
+  signature, with `if working_dir is None: working_dir = os.getcwd()`
+  resolved inside the function body, **not** `working_dir: str =
+  os.getcwd()` in the signature itself (which would freeze the cwd at
+  Python *import* time — module load — rather than at each call, a much
+  worse divergence than the usual mutable-default trap since it would
+  silently use whatever directory the process happened to `import
+  boukensha` from, not whatever directory the caller is actually in when
+  they call `run()`/`repl()`).
+- **The three-way `working_dir` parameter type (`str`/`Path`, `None`
+  meaning "default to cwd", `False` meaning "disable entirely") has no
+  single clean Python type** — recommend a `Path | Literal[False] | None`
+  annotation (or a plain runtime check without strict typing, if the
+  project isn't running a strict type checker across this port) rather
+  than inventing a sentinel object; `False` specifically (not `None`) is
+  the Ruby source's own chosen "disabled" value (`working_dir: false`),
+  so Python should keep `False` as the disable sentinel too, for call-site
+  fidelity with the Ruby examples/README (`working_dir: false` in Ruby
+  reads naturally as `working_dir=False` in Python).
+
+## Testing
+
+Ruby's `10_standard_tool_library` has no automated tests, only
+`examples/example.rb` (a real, live-MUD-server-driven run — genuinely the
+hardest example in this whole series to smoke-test without a running
+CircleMUD instance). Recommend:
+
+1. Port `examples/example.py` 1:1 for manual smoke-testing — **requires an
+   actual reachable CircleMUD server** (the real `.boukensha/settings.yaml`
+   already has a working `mud:` block in this repo, per the earlier
+   debugging history) to exercise for real; document this requirement
+   clearly in the Python README rather than pretending it's a pure-offline
+   demo like every earlier step's example.
+2. Carry all `09_global_executable` test files forward; extend
+   `test_context.py` (`working_dir` field, expansion behaviour, `None`
+   default) and `test_repl.py` (banner validation restored — same
+   assertions `08_the_repl_loop`'s plan specified — plus the new mud
+   status line, with `_probe_mud` mocked/monkeypatched so tests never
+   open a real socket).
+3. Add `tests/test_tools/test_file_system.py` against a `tmp_path` fixture
+   directory, covering all six tools: `pwd` returns the root; `list_
+   directory` (default `.`, sorted, directories suffixed `/`, empty →
+   `"(empty)"`); `read_file`/`write_file` (incl. creating missing parent
+   dirs)/`delete_file` round-trip; `search_files` (literal + regex
+   patterns, `glob:` filtering, `path:line:content` format, invalid regex
+   → error string, no matches → `"no matches"`); and, for every tool, a
+   `../`-escaping path argument → the specific escape error string, not an
+   exception.
+4. Add `tests/test_tools/test_shell.py` with real subprocess execution in
+   a `tmp_path` (no mocking needed — these are genuinely fast, offline
+   commands): a plain command's combined stdout+stderr; a non-zero exit →
+   `"[exit N]"` suffix; a command producing no output → `"(no output)"`;
+   an `allowed_commands` allow-list rejecting a disallowed first token
+   without executing it at all; a command that exceeds `timeout` → the
+   timeout error string; a nonexistent executable → the "command not
+   found" error string.
+5. Add `tests/test_tools/test_mud.py` against a **fake/mocked
+   `mud_manager.Session`** (a test double implementing the same interface,
+   no real socket) covering: successful auto-connect at `register()` time;
+   auto-connect failure is swallowed (warning only, registration still
+   completes, tools are still registered); every gameplay tool when
+   disconnected returns the "not connected" guard string instead of
+   calling through to `send_cmd`; an `ArgumentError`-raising `Primitives`
+   call (e.g. an invalid `direction`) surfaces as an `"error: ..."` string
+   for tools that wrap it, and is **not** caught for the tools that don't
+   (`flee`/`practice`/`save_character`/`send_raw`) — matching the
+   per-tool exactness called out in behavioural rule 7.
+6. Extend `tests/test_run.py` (from `07_the_run_dsl`'s plan) with:
+   `working_dir` truthy → `FileSystem`+`Shell` tools appear in the
+   registry; `working_dir=False` → neither does; `mud=None` + config
+   without `mud_username` → no MUD tools registered; `mud=None` + config
+   with both `mud_host`/`mud_username` → MUD tools registered using
+   config values; `mud=False` → never registered regardless of config;
+   an explicit `mud={...}` dict → registered using those exact values,
+   bypassing config entirely.
+7. Extend `tests/test_boukensha_loader.py` (from `09_global_executable`'s
+   plan) with: `MUD_NAME` set (with `MUD_PASSWORD`) → `repl()` called with
+   the legacy env-derived `mud=` dict and `working_dir=False`; `MUD_NAME`
+   set without `MUD_PASSWORD` → aborts with the specific message; neither
+   set → `repl()` called with no explicit `mud`/`working_dir` override.
+
+## Open questions
+
+1. Confirm treating the Python port of `mud_manager` as a fully separate,
+   standalone package with its own dedicated plan document — not designed
+   in this plan, not embedded inside `week1_baseline/python/10_standard_
+   tool_library/`'s own source tree — mirroring Ruby's own gem-boundary
+   choice exactly. This blocks any *real* `Tools::Mud` implementation
+   (fakes/mocks are sufficient for this step's own test suite, per the
+   testing section above, but not for the live `examples/example.py`
+   smoke test).
+2. Confirm restoring the REPL banner's full validation logic in *this*
+   step's `repl.py` (not `09_global_executable`'s), matching exactly which
+   Ruby file/commit re-added it — cross-reference against `09_global_
+   executable`'s open question 4, which flags the same regression from
+   the other direction.
+3. Confirm documenting `examples/example.py` as requiring a real, reachable
+   CircleMUD server (not a pure-offline demo) in the Python README, rather
+   than attempting to fake/mock a MUD server for the example itself
+   (mocking is appropriate for unit tests per the testing section, not for
+   the example a reader is meant to actually run).
+4. Confirm the `False`-as-disable-sentinel choice for both `working_dir`
+   and `mud` (matching Ruby's own `working_dir: false`/`mud: false`
+   call-site spelling) rather than inventing a different Python-idiomatic
+   sentinel (e.g. a dedicated `Disabled` singleton) that would break
+   call-site fidelity with the Ruby README/examples.
+5. Confirm removing the README's false "evolution of step 9's
+   `WorkingDirectory`" claim in the Python docs (no such module exists in
+   `09_global_executable`) rather than reproducing it.
+
+Confirm all

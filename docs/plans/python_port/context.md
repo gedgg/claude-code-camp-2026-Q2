@@ -19,11 +19,140 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | `03_prompt_builder` | `week1_baseline/ruby/03_prompt_builder` | `week1_baseline/python/03_prompt_builder` | ⬜ planned |
 | `04_api_client` | `week1_baseline/ruby/04_api_client` | `week1_baseline/python/04_api_client` | ⬜ planned |
 | `05_agent_loop` | `week1_baseline/ruby/05_agent_loop` | `week1_baseline/python/05_agent_loop` | ⬜ planned |
+| `06_the_logger` | `week1_baseline/ruby/06_the_logger` | `week1_baseline/python/06_the_logger` | ⬜ planned |
+| `07_the_run_dsl` | `week1_baseline/ruby/07_the_run_dsl` | `week1_baseline/python/07_the_run_dsl` | ⬜ planned |
+| `08_the_repl_loop` | `week1_baseline/ruby/08_the_repl_loop` | `week1_baseline/python/08_the_repl_loop` | ⬜ planned |
+| `09_global_executable` | `week1_baseline/ruby/09_global_executable` | `week1_baseline/python/09_global_executable` | ⬜ planned |
+| `10_standard_tool_library` | `week1_baseline/ruby/10_standard_tool_library` | `week1_baseline/python/10_standard_tool_library` | ⬜ planned |
 
 Nothing has been committed to git yet — everything below is working-tree
 state as of 2026-07-26. Plans for `03`–`05` were written 2026-07-27, ahead
 of implementation, so a future porting session can start straight from
-them.
+them. Plans for `06`–`10` were written 2026-07-28, completing the plan
+coverage for every numbered Ruby step that exists in `week1_baseline/ruby/`
+as of this writing — none of `03`–`10` are implemented yet.
+
+---
+
+## 06_the_logger / 07_the_run_dsl / 08_the_repl_loop / 09_global_executable / 10_standard_tool_library — planned, not yet ported (2026-07-28)
+
+Plans: [`06_the_logger`](06_the_logger), [`07_the_run_dsl`](07_the_run_dsl),
+[`08_the_repl_loop`](08_the_repl_loop),
+[`09_global_executable`](09_global_executable),
+[`10_standard_tool_library`](10_standard_tool_library)
+
+Written the same way as `03`–`05`: examining the Ruby sources directly
+(`diff`-ing each step against its predecessor) since none of these five
+exist under `week1_baseline/python/` yet, and none of `03`–`05` are
+implemented yet either — so this chain of five plans is written entirely
+against Ruby source, with each plan's "Reference files" pointing at the
+*previous plan document* (not real Python code) for the parts that don't
+change. If `03`–`05` land with different decisions than their plans
+currently describe, the "unchanged copy" assumptions in `06`–`10` should
+be re-checked the same way `03`'s own loose-thread note already warns.
+
+Notable findings surfaced while planning (full detail in each plan file):
+
+- **`06_the_logger`** introduces `Boukensha::Logger` (structured JSONL
+  session logs) and instruments `Agent` throughout. Found a real, lasting
+  behavioural change (not a quirk): tool-dispatch errors are now caught
+  and turned into an `"ERROR: ..."` string `tool_result` instead of
+  crashing the loop. Also found a **short-lived Ruby-side deletion**:
+  `Config#mud_host`/etc. and `errors.rb`'s `LoopError` are both removed in
+  this step and **reappear in `07_the_run_dsl`** — recommended porting the
+  removal faithfully here and re-adding both in the next step, exactly
+  mirroring Ruby's own history rather than leaving them in "just in case."
+  Flagged a real circular-import design problem for Python's module-level
+  `quiet!`/`debug!`/`config` state living in `__init__.py` while
+  `logger.py` needs to read it — recommended a deferred `import boukensha`
+  inside `logger.py`'s method bodies.
+- **`07_the_run_dsl`** introduces the `Boukensha.run` one-call entry point
+  and `RunDSL`. Found real README inaccuracies: the docs describe only two
+  backends and two nonexistent options (`token_budget:`, `max_tokens:`)
+  that don't exist in the real five-backend, `max_output_tokens:`-only
+  signature — recommended the Python README describe the real signature,
+  not the Ruby README's stale one. The bigger design problem: Ruby's
+  `instance_eval`-based DSL block (bare `tool(...)` calls resolving
+  against an implicit `self`) has **no** Python equivalent — recommended
+  an explicit `register=lambda dsl: dsl.tool(...)` callable parameter
+  instead, a real, unavoidable call-site-shape divergence, not an
+  implementation detail.
+- **`08_the_repl_loop`** introduces `Boukensha.repl`/`Repl` and makes
+  `Agent` persist its final reply into `Context` (needed for multi-turn
+  history). Found two real, good additions to port faithfully (a
+  cwd-`.boukensha` config-resolution tier; a friendlier `401` `ApiError`
+  message) — **both of which get silently reverted one step later**, see
+  `09_global_executable` below.
+- **`09_global_executable`** packages BOUKENSHA as a real installable
+  command (`boukensha.gemspec`, `bin/boukensha`, `boukensha_loader.rb`'s
+  three-tier env-var/rc-file/bundled-default resolution). This step has
+  **no `examples/` directory and no `bin/ruby/09_global_executable`
+  launcher anywhere in the repo** — confirmed real, not an oversight — so
+  its Python plan is the one exception in this whole series with no
+  `examples/example.py`/launcher in its target layout. Found three real
+  regressions relative to `08_the_repl_loop`, each judged differently:
+  the friendlier 401 message is dropped with no visible rationale
+  (recommended **not** replicating — this is the one place in the `06`–
+  `10` chain where "port faithfully" is explicitly overridden, same
+  category as `04_api_client`'s `PROMPTS_DIR` call); the cwd-`.boukensha`
+  tier is dropped with a plausible "a global command should behave the
+  same regardless of cwd" rationale (recommended replicating, flagged as
+  a judgment call); the REPL banner's API-key/config-dir validation is
+  dropped entirely (recommended replicating for fidelity to this exact
+  step, but flagged prominently — this is the **exact regression** behind
+  the real `09_global_executable` debugging session earlier in this
+  repo's history, where a missing `~/.boukensha/` produced a hard crash
+  instead of a banner warning). Also designed the one genuinely novel
+  mechanism in this series: loading an arbitrary `BOUKENSHA_PATH` step's
+  Python source by exact file path via `importlib.util.spec_from_file_
+  location` + manual `sys.modules` registration, avoiding any `sys.path`-
+  precedence ambiguity with the installed package's own bundled default.
+  **Decided 2026-07-28:** the Python console script is named
+  `boukensha-py`, not `boukensha` — the Ruby gem already installs a real
+  `boukensha` executable on this machine, and the two are meant to coexist
+  for comparison rather than fight over `$PATH` order. `pyproject.toml`'s
+  `[project.scripts]` entry, and every README/CLI-output reference, use
+  `boukensha-py`.
+- **`10_standard_tool_library`** adds `Tools::FileSystem`/`Tools::Shell`/
+  `Tools::Mud`, `Context#working_dir`, and `working_dir:`/
+  `allowed_commands:`/`shell_timeout:`/`mud:` kwargs on `Boukensha.run`/
+  `.repl`. Good news: this step **restores** `09_global_executable`'s
+  dropped banner validation (confirms `09`'s regression really was
+  temporary, not a permanent product decision) and adds a MUD status line.
+  The major scoping finding: `Tools::Mud` depends on the separate
+  `mud_manager` gem (`week0_explore/mud_manager` — a ~690-line telnet
+  session/CircleMUD-command-builder library) which **has no Python port
+  and no plan anywhere in this series** — recommended treating `mud_
+  manager`'s Python port as its own standalone package with its own
+  future plan document, out of scope for this plan, which only designs
+  `Tools::Mud`'s registration/wiring layer against `mud_manager`'s
+  existing (Ruby) public shape. Also found a false README claim ("the
+  evolution of step 9's `WorkingDirectory`") — no such module exists
+  anywhere in `09_global_executable`; `FileSystem` is wholly new here.
+
+### Loose threads for whoever ports these
+
+- **Blocking dependency:** `Tools::Mud` in `10_standard_tool_library`
+  cannot be implemented for real (only faked/mocked for its own unit
+  tests) until `mud_manager` has a Python port. That port doesn't exist
+  and isn't planned in this series — write that plan first, or in
+  parallel, before attempting a real `10_standard_tool_library`
+  implementation.
+- None of `06`–`10` exist under `week1_baseline/python/` yet, and neither
+  do `03`–`05` — these are plans only, all five and the earlier three plan
+  on top of each other in a chain with no real Python code underneath any
+  of them yet. The next porting session should implement in order
+  (`03` → `04` → `05` → `06` → `07` → `08` → `09` → `10`), since each
+  plan's "unchanged copy" claims assume the previous step's *planned* tree
+  is what actually gets built — if an earlier step's real implementation
+  diverges from its plan, re-check every later plan's assumptions against
+  the real code, not the plan text, before trusting them.
+- Three separate "port faithfully vs. fix" judgment calls were made across
+  `08`/`09` (the 401 message, the cwd-config tier, the banner validation)
+  that land on different sides of the line for different reasons — a
+  future session implementing these steps should re-confirm each
+  independently rather than assuming a single blanket policy applies to
+  all Ruby-side regressions encountered in this series.
 
 ---
 
