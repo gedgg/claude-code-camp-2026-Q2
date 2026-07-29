@@ -16,21 +16,209 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | `00_config` | `week1_baseline/ruby/00_config` | `week1_baseline/python/00_config` | ✅ done |
 | `01_struct_skeleton` | `week1_baseline/ruby/01_struct_skeleton` | `week1_baseline/python/01_struct_skeleton` | ✅ done |
 | `02_the_registry` | `week1_baseline/ruby/02_the_registry` | `week1_baseline/python/02_the_registry` | ✅ done |
-| `03_prompt_builder` | `week1_baseline/ruby/03_prompt_builder` | `week1_baseline/python/03_prompt_builder` | ⬜ planned |
-| `04_api_client` | `week1_baseline/ruby/04_api_client` | `week1_baseline/python/04_api_client` | ⬜ planned |
-| `05_agent_loop` | `week1_baseline/ruby/05_agent_loop` | `week1_baseline/python/05_agent_loop` | ⬜ planned |
-| `06_the_logger` | `week1_baseline/ruby/06_the_logger` | `week1_baseline/python/06_the_logger` | ⬜ planned |
-| `07_the_run_dsl` | `week1_baseline/ruby/07_the_run_dsl` | `week1_baseline/python/07_the_run_dsl` | ⬜ planned |
-| `08_the_repl_loop` | `week1_baseline/ruby/08_the_repl_loop` | `week1_baseline/python/08_the_repl_loop` | ⬜ planned |
-| `09_global_executable` | `week1_baseline/ruby/09_global_executable` | `week1_baseline/python/09_global_executable` | ⬜ planned |
-| `10_standard_tool_library` | `week1_baseline/ruby/10_standard_tool_library` | `week1_baseline/python/10_standard_tool_library` | ⬜ planned |
+| `03_prompt_builder` | `week1_baseline/ruby/03_prompt_builder` | `week1_baseline/python/03_prompt_builder` | ✅ done |
+| `04_api_client` | `week1_baseline/ruby/04_api_client` | `week1_baseline/python/04_api_client` | ✅ done |
+| `05_agent_loop` | `week1_baseline/ruby/05_agent_loop` | `week1_baseline/python/05_agent_loop` | ✅ done |
+| `06_the_logger` | `week1_baseline/ruby/06_the_logger` | `week1_baseline/python/06_the_logger` | ✅ done |
+| `07_the_run_dsl` | `week1_baseline/ruby/07_the_run_dsl` | `week1_baseline/python/07_the_run_dsl` | ✅ done |
+| `08_the_repl_loop` | `week1_baseline/ruby/08_the_repl_loop` | `week1_baseline/python/08_the_repl_loop` | ✅ done |
+| `09_global_executable` | `week1_baseline/ruby/09_global_executable` | `week1_baseline/python/09_global_executable` | ✅ done |
+| `10_standard_tool_library` | `week1_baseline/ruby/10_standard_tool_library` | `week1_baseline/python/10_standard_tool_library` | ✅ done — `Tools.Mud` real but unexercised live, see log below |
 
 Nothing has been committed to git yet — everything below is working-tree
 state as of 2026-07-26. Plans for `03`–`05` were written 2026-07-27, ahead
 of implementation, so a future porting session can start straight from
 them. Plans for `06`–`10` were written 2026-07-28, completing the plan
 coverage for every numbered Ruby step that exists in `week1_baseline/ruby/`
-as of this writing — none of `03`–`10` are implemented yet.
+as of this writing.
+
+---
+
+## Implementation log: `03`–`10` fully ported and verified (2026-07-28 – 2026-07-29)
+
+Executed the plans above, in order, across two sessions (`03`–`09` on
+2026-07-28, `10` on 2026-07-29). **All eight steps are done**: real code,
+real tests, `ruff` clean, and each one verified either against real Ruby
+output or (from `04` onward, since real network calls enter the picture)
+against the **real live Anthropic API** using this repo's actual
+`.boukensha/` config and API key — not just unit tests with fakes.
+`10_standard_tool_library`'s one carve-out — `Tools.Mud` can't be
+exercised live because the separate `mud_manager` Python package doesn't
+exist — was confirmed as a clean, expected failure at exactly that
+boundary (see "`10` completion notes" below), not worked around or faked.
+
+### What's real and working right now
+
+- `week1_baseline/python/{03_prompt_builder .. 10_standard_tool_library}/`
+  — each a fully self-contained `uv` project: `src/boukensha/...`,
+  `prompts/system.md`, `tests/`, and (except `09`, deliberately — see its
+  own plan) `examples/example.py`.
+- `week1_baseline/bin/python/{03..08,10}` — launcher scripts (`09` has
+  none, deliberately — see below).
+- Every step's test suite passes and `ruff check` is clean:
+  `03` 86 tests, `04` 96, `05` 138, `06` 150, `07` 159, `08` 181,
+  `09` 190, `10` 236 — all green at the time each step was completed.
+- **Live-verified, not just unit-tested:**
+  - `03`: `bin/python/03_prompt_builder` output diffed line-for-line
+    against `bin/ruby/03_prompt_builder`'s real output (identical except
+    already-documented JSON-pretty-print cosmetics).
+  - `04`–`08`: each step's `examples/example.py` actually run against the
+    real Anthropic API (`claude-haiku-4-5`, using this repo's real
+    `../.boukensha/.env` key) and produced a correct, sensible final
+    response — including a real multi-turn tool-calling loop in `05`, a
+    real JSONL session file with correct cost/usage metadata in `06`, a
+    real `boukensha.run(register=...)` call in `07`, and a real
+    **interactive REPL session** (stdin piped in) in `08`.
+  - `09`: the **actual installed** `boukensha-py` console script
+    (`.venv/bin/boukensha-py` after `uv sync`) was run for real, three
+    ways: (a) bundled default → live REPL turn against the real API: (b)
+    `BOUKENSHA_PATH` pointed at the real `08_the_repl_loop` directory →
+    confirmed it loads *that* step's different code (different version
+    number and richer banner shown); (c) `BOUKENSHA_PATH` pointed at
+    `02_the_registry` (no `.repl`) → confirmed the correct abort message.
+    This live run caught and fixed a real bug (see below) that no unit
+    test had caught.
+
+### A real bug found only by live-testing `09` (already fixed)
+
+`boukensha_loader.py`'s `BUNDLED_LIB` was originally computed as
+`Path(__file__).resolve().parent / "boukensha" / "__init__.py"` — assuming
+`boukensha_loader.py` and the `boukensha/` package sit physically next to
+each other in the installed location. **This breaks under `uv sync`'s
+editable-install mode** (which this project's own dev workflow uses):
+`boukensha_loader.py` gets physically placed in `site-packages/` via
+`force-include`, but `boukensha/` stays in `src/boukensha/` and is only
+reachable via a `.pth`-file redirect — the two are not adjacent on disk.
+Fixed by computing `BUNDLED_LIB` via `importlib.util.find_spec
+("boukensha")` instead, which resolves correctly regardless of install
+mode (editable, wheel, whatever). **Lesson for finishing `10`:** after
+editing `boukensha_loader.py` or anything under `src/boukensha/`, remember
+`uv sync --reinstall-package boukensha` — a plain `uv sync` does **not**
+refresh an already-`force-include`d file if only its *content* changed
+(this cost real debugging time before the fix above was found — don't
+trust `uv sync`'s no-op fast path when `force-include` is in play).
+
+### Conventions established across `03`–`10` (follow these for any later step)
+
+- **Absolute imports throughout** (`from boukensha.config import Config`),
+  never relative (`from . import config`) — matches the style already
+  established in `00_config`/`01_struct_skeleton`/`02_the_registry`.
+- **`MODELS` class attributes need `ClassVar[dict[str, dict]]`
+  annotations** (`from typing import ClassVar`) or `ruff` flags `RUF012`
+  (mutable class-attribute default) — applies to every backend's `MODELS`
+  table and to any test fixture class with a similar mutable class
+  attribute (e.g. a `ClassVar[list]` for a "recorded instances" test
+  double).
+- **Deferred `import boukensha` inside method bodies** (not at module
+  top-level) is the established fix for the circular-import problem
+  between `__init__.py` (needs `from .logger import Logger`/`from .repl
+  import Repl` for re-export) and any submodule that needs
+  `is_debug()`/`get_config()`/etc. from `__init__.py` — see `logger.py`'s
+  `raw()`/`_default_dir()` and `repl.py`'s `/quiet`/`/loud` handlers.
+- **`run()`/`repl()` in `__init__.py` are two separate, fully duplicated
+  functions**, not refactored to share a common "build the stack" helper —
+  deliberately mirroring Ruby's own choice not to factor this out (`self.
+  run`/`self.repl` are literal near-copies in the Ruby source too).
+- **pyproject.toml versions:** `00`–`08` all independently use `"0.1.0"`
+  (steps are standalone `uv` projects with their own versioning, unmoored
+  from Ruby's `VERSION` constant, which doesn't even exist until step 8).
+  **`09` and `10` are the exception** — their `pyproject.toml` `version`
+  now tracks Ruby's `version.rb` (`"0.9.0"`, `"0.10.0"`) because these two
+  steps are real, installable artifacts where the package version is
+  user-facing, not just an internal implementation step.
+- **Scaffolding a new step:** `cp -r <prev_step> <new_step>`, then `find
+  . -name "__pycache__" -exec rm -rf {} +` and `rm -rf .venv .ruff_cache
+  .pytest_cache uv.lock` before touching anything — the copied `.venv`
+  otherwise silently shadows real dependency changes.
+- **Verification sequence per step:** `uv sync` → `uv run pytest -q` → `uv
+  run ruff check src examples tests` → (from `04` on) an actual live run
+  against the real `.boukensha/` dir and real API key, comparing/sanity-
+  checking output. Don't skip the live run — it's what caught the `09` bug
+  above, and unit tests with fakes would never have caught it.
+- **`boukensha-py`, not `boukensha`**, is the console-script name from `09`
+  onward (coexists with the Ruby gem's already-installed `boukensha`
+  executable) — see `09_global_executable`'s plan and README for the
+  rationale.
+
+### `10` completion notes (2026-07-29)
+
+Everything in the plan's checklist landed: `version.py` → `"0.10.0"`;
+`Context.working_dir`; `boukensha/tools/{__init__,file_system,shell,mud}.py`;
+`repl.py`'s banner validation restored (confirms `09`'s regression really
+was temporary) plus `mud=`/`_mud_status_string`/`_probe_mud`
+(TCP-reachability-only, no login probe — that would double-connect since
+`Tools.mud.register` already auto-connects at startup); `run()`/`repl()`
+gained `working_dir`/`allowed_commands`/`shell_timeout`/`mud` and
+`_mud_opts_from_config`; `boukensha_loader.py` gained the `MUD_NAME`/etc
+legacy env-var branch; `examples/example.py` + `bin/python/
+10_standard_tool_library`; the full test suite (236 tests, `tests/
+test_tools/{test_file_system,test_shell,test_mud}.py` among them).
+
+**One deliberate, necessary deviation from a mechanical port:**
+`boukensha/tools/mud.py`'s `import mud_manager` is deferred to *inside*
+`register()`, not sitting at module top level like Ruby's `require
+"mud_manager"`. Reason: `mud_manager` has no Python port and isn't
+installed anywhere in this environment (confirmed prerequisite gap, called
+out in the plan). If the import sat at module top level, merely importing
+`boukensha` — which every other test in this whole port does — would
+raise `ModuleNotFoundError` everywhere, breaking all 236 tests, not just
+the MUD-specific ones. Deferring it means `boukensha.tools.mud` imports
+fine; only actually *calling* `register()` needs the real (or, in tests, a
+fake-in-`sys.modules`) `mud_manager`.
+
+**Live verification, three parts:**
+1. `examples/example.py` (the real MUD demo) run against this repo's real
+   `.boukensha/` config (which has a genuine, reachable CircleMUD `[mud]`
+   section) — confirmed it fails with exactly `ModuleNotFoundError: No
+   module named 'mud_manager'` at the `tools.mud.register(...)` call, and
+   nowhere else. A clean failure at the documented dependency boundary,
+   not a bug.
+2. A standalone script called `boukensha.run(working_dir=..., mud=False)`
+   against the **real live Anthropic API**: the agent correctly listed a
+   directory and read a file's contents back through the real,
+   auto-registered `file_system` tools.
+3. Same pattern for `boukensha.tools.shell`'s `run_command` (via
+   `allowed_commands=["echo"]`) — the agent ran a real shell command and
+   correctly reported its output.
+
+This confirms `file_system`/`shell` are fully real and working end-to-end;
+only `mud` is blocked, exactly where the plan said it would be.
+
+**Still open, for whenever it's picked up:** a real Python port of
+`mud_manager` (`week0_explore/mud_manager` — `Session`/`Primitives`,
+~690 lines of Ruby) doesn't exist. It's a standalone, separate porting
+effort (mirroring Ruby's own gem boundary — `mud_manager` was never part
+of `boukensha` on the Ruby side either), not a numbered step in this
+`docs/plans/python_port/<step>` series. Until it lands, `Tools.mud`'s
+registration/wiring logic here is real and unit-tested against a fake
+`Session` double, but cannot be exercised against a real MUD server.
+
+**This closes out the full `03`–`10` porting effort** — every numbered
+Ruby step in `week1_baseline/ruby/` now has a corresponding, tested,
+`ruff`-clean Python port (except the `mud_manager` dependency noted
+above).
+
+### `boukensha-py` is not installed globally — deferred, not a bug (2026-07-29)
+
+User ran plain `boukensha-py` from a shell (outside any step's `.venv`)
+and got `command not found`. Confirmed this is expected, not a
+regression: **no `uv tool install .` has ever been run for real** in this
+port — every verification so far used a step's own local `.venv/bin/
+boukensha-py` (or `uv run boukensha-py`) after `uv sync`, which only makes
+the command available from inside that step's directory/venv, not
+globally. `uv tool list` confirms zero tools installed; `boukensha-py`
+isn't on `$PATH`.
+
+To make it a real global command (matching what the Ruby gem's `boukensha`
+already does — installed and living on `$PATH`), someone needs to run `uv
+tool install .` from inside the desired step's directory — `10_standard_
+tool_library` (the most complete step) is the natural candidate, per its
+own README's install instructions. **User chose to continue with the
+Ruby-side course material for now and revisit this later** — nothing to
+do here yet, just noting the open thread so a future session doesn't
+have to rediscover it. When it's picked up: confirm which step should be
+the global default (`10` vs `09`), then `cd` there and run `uv tool
+install .`.
 
 ---
 

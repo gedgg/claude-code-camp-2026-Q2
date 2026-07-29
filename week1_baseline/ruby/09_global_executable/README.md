@@ -12,7 +12,7 @@ Package BOUKENSHA as a gem so the `boukensha` command works from anywhere on you
 ## Install
 
 ```bash
-cd 08_global_executable
+cd 09_global_executable
 gem build boukensha.gemspec
 gem install boukensha-0.1.0.gem
 ```

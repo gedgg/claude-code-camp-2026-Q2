@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "boukensha"
+version = "0.10.0"
+description = "BOUKENSHA standard tool library — FileSystem/Shell/Mud tools (Python port of week1_baseline/ruby/10_standard_tool_library)"
+readme = "README.md"
+authors = [
+    { name = "gedgg", email = "gediminas.bijeikis@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+# Named boukensha-py, not boukensha, so it can coexist with the Ruby gem's
+# already-installed `boukensha` executable rather than fighting over $PATH order.
+boukensha-py = "boukensha_loader:main"
+
+[tool.ruff]
+line-length = 120
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.14.14",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/boukensha"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/boukensha_loader.py" = "boukensha_loader.py"
