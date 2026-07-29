@@ -53,3 +53,4 @@ BOUKENSHA_DEBUG=1 boukensha
 ## The key idea
 
 The gem is just a **wrapper and a default**. All the teaching material stays in the numbered step folders exactly as it was. The gem doesn't copy or symlink anything — it just knows where to look.
+bou
