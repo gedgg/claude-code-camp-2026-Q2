@@ -220,6 +220,54 @@ have to rediscover it. When it's picked up: confirm which step should be
 the global default (`10` vs `09`), then `cd` there and run `uv tool
 install .`.
 
+### Real Ruby-side bugs found and fixed while operating as the porting/debugging agent (2026-07-28 – 2026-07-29)
+
+Separate from anything in the port plans themselves, several real,
+production bugs were found and fixed on **this machine's actual Ruby
+install** while investigating user-reported issues (a broken `09_global_
+executable` setup, and later a "MUD agent doesn't respond to the game"
+report). Full detail, root causes, fixes, and a **Python-port investigation
+plan for each** now live in a dedicated companion file:
+**[`bug_log.md`](bug_log.md)**.
+
+Quick summary (see `bug_log.md` for the full write-up of each):
+
+1. **`~/.boukensharc` held a stray `KEY=value` line** instead of a plain
+   step path → cleared it.
+2. **`~/.boukensha` config directory didn't exist** (no `settings.yaml`,
+   no `prompts/`) → copied the working repo-root config there.
+3. **`mud_manager` gem was never installed** → `gem install --local`.
+4. **Stale, cross-machine `Gemfile.lock`** (built on `arm64-darwin-23`,
+   run on Linux/WSL2) in `10_standard_tool_library` → deleted and
+   regenerated fresh.
+5. **Global `boukensha` resolved to gem v0.9.0** (no tools at all) instead
+   of v0.10.0 → installed the correct version.
+6. **The big one: the `.gem` file itself was a stale, pre-`Tasks::Player`
+   -refactor build** — its `Config` class expected an entirely different
+   settings schema (`provider.type`/`system.override`/flat `system.md`)
+   than the real `~/.boukensha/settings.yaml` uses, silently resolving the
+   system prompt to `nil` and getting the request rejected by Anthropic
+   with a confusing `"system: Input should be a valid array"` 400. Found
+   by literally intercepting the raw HTTP request bytes at runtime, not by
+   reasoning about the payload. Fixed by rebuilding the gem fresh from the
+   current source (`gem build boukensha.gemspec`) and reinstalling.
+7. **`log_viz`** (unrelated to the port itself, but debugged the same
+   session): a *suspended*, not crashed, Puma process was holding port
+   4567 from an earlier terminal, and it defaulted to reading the
+   repo-root `.boukensha/sessions` while plain `boukensha` invocations log
+   to `~/.boukensha/sessions` instead — resumed the process and pointed it
+   at the right directory.
+
+**`bug_log.md`'s investigation plan asks, for each of these:** does the
+same *class* of bug have an equivalent risk in the Python port, and if so,
+how would it be located, fixed, and tested? Headline finding from that
+exercise: bug #6 above (a stale built artifact silently diverging from
+source) has a **direct structural equivalent** in the Python port —
+`boukensha_loader.py` is `force-include`d as a physically-copied file into
+`site-packages/` (not covered by `uv sync`'s normal editable-install
+auto-sync), so it can go stale the exact same way the Ruby `.gem` did.
+This is flagged as the top-priority item to verify in that plan.
+
 ---
 
 ## 06_the_logger / 07_the_run_dsl / 08_the_repl_loop / 09_global_executable / 10_standard_tool_library — planned, not yet ported (2026-07-28)
